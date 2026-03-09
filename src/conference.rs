@@ -46,6 +46,14 @@ pub fn list_conferences() -> Vec<(&'static str, &'static str)> {
         ("usenix-security", "USENIX Security"),
         ("ndss", "NDSS"),
         ("aamas", "AAMAS"),
+        // Security
+        ("sp", "IEEE S&P"),
+        ("ccs", "CCS"),
+        // Cryptography
+        ("crypto", "CRYPTO"),
+        ("eurocrypt", "EUROCRYPT"),
+        // Simulation
+        ("wsc", "WSC"),
     ]
 }
 
@@ -92,6 +100,31 @@ pub fn get_scraper(
         )),
         "aamas" => Ok(Arc::new(
             crate::scraper::aamas::AamasScraper::new().with_interval(interval),
+        )),
+        // CryptoDB API (IACR)
+        "crypto" | "eurocrypt" => {
+            let name = list_conferences()
+                .into_iter()
+                .find(|(cid, _)| *cid == id)
+                .map(|(_, name)| name)
+                .unwrap();
+            Ok(Arc::new(
+                crate::scraper::cryptodb::CryptoDbScraper::new(id, name)
+                    .with_interval(interval),
+            ))
+        }
+        // DBLP API
+        "sp" => Ok(Arc::new(
+            crate::scraper::dblp::DblpScraper::new("sp", "IEEE S&P", "sp", 1981, 2025)
+                .with_interval(interval),
+        )),
+        "ccs" => Ok(Arc::new(
+            crate::scraper::dblp::DblpScraper::new("ccs", "CCS", "ccs", 1994, 2025)
+                .with_interval(interval),
+        )),
+        "wsc" => Ok(Arc::new(
+            crate::scraper::dblp::DblpScraper::new("wsc", "WSC", "wsc", 1968, 2025)
+                .with_interval(interval),
         )),
         _ => bail!(
             "Unknown conference: '{}'. Use 'list-conferences' to see available conferences.",

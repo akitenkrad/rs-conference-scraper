@@ -8,14 +8,16 @@ Conference paper scraping and filtering tool. Collects paper metadata (title, au
 cargo install --path .
 ```
 
-## Supported Conferences (21)
+## Supported Conferences (26)
 
 | Category | Conferences |
 |----------|------------|
 | **NLP** | ACL, EMNLP, NAACL, COLING, EACL, AACL, LREC, CoNLL, SemEval, SIGDIAL, IJCNLP, WMT |
 | **ML/AI** | NeurIPS, ICLR, ICML |
 | **CV** | CVPR, ICCV |
-| **Security** | USENIX Security, NDSS |
+| **Security** | USENIX Security, NDSS, IEEE S&P, CCS |
+| **Cryptography** | CRYPTO, EUROCRYPT |
+| **Simulation** | WSC |
 | **Agents** | AAMAS |
 
 ```bash
@@ -104,6 +106,8 @@ conf-scraper cache clear  # clear all
 | USENIX Security | usenix.org | HTML scrape (10s crawl delay) |
 | NDSS | ndss-symposium.org | HTML scrape |
 | AAMAS | ifaamas.org | HTML scrape (no abstracts) |
+| CRYPTO, EUROCRYPT | CryptoDB API (iacr.org) | JSON API (abstracts included) |
+| IEEE S&P, CCS, WSC | DBLP Search API | JSON API (no abstracts) |
 
 ## Configuration
 

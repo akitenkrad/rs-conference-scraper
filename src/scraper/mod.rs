@@ -4,7 +4,9 @@ use std::time::Duration;
 
 pub mod aamas;
 pub mod acl;
+pub mod cryptodb;
 pub mod cvf;
+pub mod dblp;
 pub mod iclr;
 pub mod icml;
 pub mod ndss;
