@@ -131,7 +131,7 @@ pub async fn run_sync(args: &SyncArgs, cache_dir: &std::path::Path) -> Result<()
             );
         }
 
-        paper_bar.finish();
+        paper_bar.finish_and_clear();
 
         // Mark completed
         let total_count = db.fetched_ids(scraper.id(), *year)?.len();
