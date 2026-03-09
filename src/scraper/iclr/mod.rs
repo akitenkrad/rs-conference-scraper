@@ -42,7 +42,7 @@ impl ConferenceScraper for IclrScraper {
     }
 
     async fn fetch_years(&self, _client: &reqwest::Client) -> Result<Vec<u16>> {
-        Ok(vec![2020, 2021, 2022, 2023, 2024, 2025])
+        Ok(vec![2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025])
     }
 
     async fn fetch_paper_list(
@@ -101,7 +101,7 @@ mod tests {
         let scraper = IclrScraper::new();
         let client = reqwest::Client::new();
         let years = scraper.fetch_years(&client).await.unwrap();
-        assert_eq!(years, vec![2020, 2021, 2022, 2023, 2024, 2025]);
+        assert_eq!(years, vec![2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]);
     }
 
     #[tokio::test]
