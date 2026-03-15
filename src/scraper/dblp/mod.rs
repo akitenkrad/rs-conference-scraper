@@ -1,8 +1,9 @@
 pub mod api;
+pub mod xml;
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -20,6 +21,7 @@ pub struct DblpScraper {
     year_range: (u16, u16),
     interval: Duration,
     paper_cache: Arc<RwLock<HashMap<String, Paper>>>,
+    cached_years: Arc<RwLock<Option<HashSet<u16>>>>,
 }
 
 impl DblpScraper {
@@ -37,6 +39,7 @@ impl DblpScraper {
             year_range: (year_start, year_end),
             interval: DEFAULT_INTERVAL,
             paper_cache: Arc::new(RwLock::new(HashMap::new())),
+            cached_years: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -45,25 +48,33 @@ impl DblpScraper {
         self
     }
 
-    /// キャッシュが空なら DBLP から全論文を取得してキャッシュに保存
-    async fn ensure_cache_populated(&self, client: &reqwest::Client) -> Result<()> {
+    /// 指定年の論文がキャッシュになければ DBLP から取得してキャッシュに保存
+    async fn ensure_year_cached(&self, client: &reqwest::Client, year: u16) -> Result<()> {
         {
-            let cache = self.paper_cache.read().await;
-            if !cache.is_empty() {
-                return Ok(());
+            if let Some(years) = self.cached_years.read().await.as_ref() {
+                if years.contains(&year) {
+                    return Ok(());
+                }
             }
         }
 
-        let papers =
-            api::fetch_all_papers(client, &self.dblp_key, &self.conf_id, self.interval).await?;
+        let papers = api::fetch_papers_for_year(
+            client,
+            &self.dblp_key,
+            &self.conf_id,
+            year,
+            self.interval,
+        )
+        .await?;
 
         let mut cache = self.paper_cache.write().await;
-        // ダブルチェック: 他タスクが先にキャッシュを埋めた場合
-        if cache.is_empty() {
-            for paper in papers {
-                cache.insert(paper.id.clone(), paper);
-            }
+        for paper in papers {
+            cache.insert(paper.id.clone(), paper);
         }
+
+        let mut years = self.cached_years.write().await;
+        let set = years.get_or_insert_with(HashSet::new);
+        set.insert(year);
 
         Ok(())
     }
@@ -88,21 +99,60 @@ impl ConferenceScraper for DblpScraper {
         client: &reqwest::Client,
         year: u16,
     ) -> Result<Vec<PaperListEntry>> {
-        self.ensure_cache_populated(client).await?;
+        // Search API で年ごとにキャッシュを構築し，失敗時は XML API にフォールバック
+        match self.ensure_year_cached(client, year).await {
+            Ok(()) => {
+                let cache = self.paper_cache.read().await;
+                let entries: Vec<PaperListEntry> = cache
+                    .values()
+                    .filter(|p| p.year == year)
+                    .map(|p| PaperListEntry {
+                        title: p.title.clone(),
+                        authors: p.authors.clone(),
+                        detail_url: p.url.clone(),
+                        track: None,
+                    })
+                    .collect();
 
-        let cache = self.paper_cache.read().await;
-        let entries: Vec<PaperListEntry> = cache
-            .values()
-            .filter(|p| p.year == year)
-            .map(|p| PaperListEntry {
-                title: p.title.clone(),
-                authors: p.authors.clone(),
-                detail_url: p.url.clone(),
-                track: None,
-            })
-            .collect();
+                Ok(entries)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "DBLP Search API failed ({}), falling back to XML proceedings API for {} {}",
+                    e,
+                    self.conf_id,
+                    year
+                );
 
-        Ok(entries)
+                // XML API から論文を取得
+                let papers = xml::fetch_papers_xml(
+                    client,
+                    &self.dblp_key,
+                    &self.conf_id,
+                    year,
+                    self.interval,
+                )
+                .await?;
+
+                // fetch_paper_detail 用にキャッシュに保存
+                let entries: Vec<PaperListEntry> = papers
+                    .iter()
+                    .map(|p| PaperListEntry {
+                        title: p.title.clone(),
+                        authors: p.authors.clone(),
+                        detail_url: p.url.clone(),
+                        track: None,
+                    })
+                    .collect();
+
+                let mut cache = self.paper_cache.write().await;
+                for paper in papers {
+                    cache.insert(paper.id.clone(), paper);
+                }
+
+                Ok(entries)
+            }
+        }
     }
 
     async fn fetch_paper_detail(
@@ -249,6 +299,13 @@ mod tests {
                     hash: String::new(),
                 },
             );
+        }
+        // cached_years にも登録して ensure_year_cached をスキップさせる
+        {
+            let mut years = scraper.cached_years.write().await;
+            let set = years.get_or_insert_with(HashSet::new);
+            set.insert(2023);
+            set.insert(2024);
         }
 
         let client = reqwest::Client::new();

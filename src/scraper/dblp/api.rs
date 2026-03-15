@@ -79,12 +79,12 @@ pub struct DblpAuthor {
 const PAGE_SIZE: u64 = 1000;
 
 /// タイトル末尾のピリオドを除去
-fn clean_title(title: &str) -> String {
+pub(super) fn clean_title(title: &str) -> String {
     title.trim().trim_end_matches('.').trim().to_string()
 }
 
 /// SHA256(title + abstract) でハッシュを計算
-fn compute_hash(title: &str, abstract_text: &str) -> String {
+pub(super) fn compute_hash(title: &str, abstract_text: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(title.as_bytes());
     hasher.update(abstract_text.as_bytes());
@@ -152,6 +152,10 @@ fn hit_to_paper(hit: &DblpHit, conf_id: &str) -> Option<Paper> {
 // ---------------------------------------------------------------------------
 
 /// DBLP Search API から指定ベニューの全論文を取得（ページネーション対応）
+///
+/// 注意: DBLP Search API には 10,000 件の取得上限がある．
+/// 論文数が 10,000 件を超える会議には `fetch_papers_for_year` を使用すること．
+#[allow(dead_code)]
 pub async fn fetch_all_papers(
     client: &reqwest::Client,
     dblp_key: &str,
@@ -165,6 +169,47 @@ pub async fn fetch_all_papers(
         let url = format!(
             "https://dblp.org/search/publ/api?q=stream:streams/conf/{}:&format=json&h={}&f={}",
             dblp_key, PAGE_SIZE, offset
+        );
+
+        let body = fetch_with_sleep(client, &url, interval).await?;
+        let resp: DblpResponse = serde_json::from_str(&body)?;
+
+        let total: u64 = resp.result.hits.total.parse().unwrap_or(0);
+        let hits = resp.result.hits.hit.unwrap_or_default();
+        let page_len = hits.len() as u64;
+
+        for hit in &hits {
+            if let Some(paper) = hit_to_paper(hit, conf_id) {
+                papers.push(paper);
+            }
+        }
+
+        offset += page_len;
+        if page_len == 0 || offset >= total {
+            break;
+        }
+    }
+
+    Ok(papers)
+}
+
+/// DBLP Search API から指定ベニュー・指定年の論文を取得（ページネーション対応）
+///
+/// Search API の 10,000 件制限を回避するため，年ごとにクエリを発行する．
+pub async fn fetch_papers_for_year(
+    client: &reqwest::Client,
+    dblp_key: &str,
+    conf_id: &str,
+    year: u16,
+    interval: Duration,
+) -> Result<Vec<Paper>> {
+    let mut papers = Vec::new();
+    let mut offset: u64 = 0;
+
+    loop {
+        let url = format!(
+            "https://dblp.org/search/publ/api?q=stream:streams/conf/{}:%20year:{}&format=json&h={}&f={}",
+            dblp_key, year, PAGE_SIZE, offset
         );
 
         let body = fetch_with_sleep(client, &url, interval).await?;
