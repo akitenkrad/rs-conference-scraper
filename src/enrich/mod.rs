@@ -82,8 +82,9 @@ enum ActiveTier {
     OpenAlex,
     ArXiv,
     CrossRef,
-    Pdf,
     Html,
+    Pdf,
+    Llm,
     Done,
 }
 
@@ -137,8 +138,9 @@ impl TierCounts {
             ActiveTier::OpenAlex => format!("{YELLOW}▶ OpenAlex{RESET}"),
             ActiveTier::ArXiv => format!("{YELLOW}▶ arXiv{RESET}"),
             ActiveTier::CrossRef => format!("{YELLOW}▶ CrossRef{RESET}"),
+            ActiveTier::Html => format!("{YELLOW}▶ HTML{RESET}"),
             ActiveTier::Pdf => format!("{YELLOW}▶ PDF{RESET}"),
-            ActiveTier::Html => format!("{YELLOW}▶ HTML/LLM{RESET}"),
+            ActiveTier::Llm => format!("{YELLOW}▶ LLM{RESET}"),
             ActiveTier::Done => format!("{GREEN}✓{RESET}"),
         };
 
@@ -194,7 +196,7 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
     }
 
     tracing::info!(
-        "Found {} papers to enrich via 6-tier fallback chain",
+        "Found {} papers to enrich via 7-tier fallback chain",
         papers.len()
     );
     tracing::info!(
@@ -331,7 +333,40 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
             }
         }
 
-        // Tier 5: PDF直接抽出（S2由来のpdf_url + paper.urlの両方を試行）
+        // Tier 5: HTMLスクレイピング（直接抽出のみ）
+        let mut llm_text: Option<String> = None;
+        if abstract_text.is_empty() {
+            pb.set_message(counts.build_msg(&ActiveTier::Html));
+            match html_scraper::fetch_abstract_via_html(&http_client, &paper.title, &paper.url)
+                .await
+            {
+                Ok(html_scraper::HtmlResult::Direct(text)) => {
+                    abstract_text = text;
+                    source = "html";
+                    tracing::debug!("Tier5(HTML) hit for '{}'", paper.title);
+                }
+                Ok(html_scraper::HtmlResult::NeedLlm(main_text)) => {
+                    // LLMティアで使うために本文テキストを保持
+                    llm_text = Some(main_text);
+                    tier_empty_count += 1;
+                    tracing::debug!("HTML direct extraction empty for '{}', saved for LLM", paper.title);
+                }
+                Ok(html_scraper::HtmlResult::Empty) => {
+                    tier_empty_count += 1;
+                    tracing::debug!("HTML scraping returned empty for '{}'", paper.title);
+                }
+                Ok(html_scraper::HtmlResult::Llm(_)) => {
+                    // fetch_abstract_via_html no longer returns Llm directly
+                    unreachable!();
+                }
+                Err(e) => {
+                    tier_error_count += 1;
+                    tracing::debug!("HTML scraping failed for '{}': {}", paper.title, e);
+                }
+            }
+        }
+
+        // Tier 6: PDF直接抽出（S2由来のpdf_url + paper.urlの両方を試行）
         if abstract_text.is_empty() {
             pb.set_message(counts.build_msg(&ActiveTier::Pdf));
             match pdf::fetch_abstract_via_pdf_urls(
@@ -344,7 +379,7 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
                 Ok(text) if !text.is_empty() => {
                     abstract_text = text;
                     source = "pdf";
-                    tracing::debug!("Tier5(PDF) hit for '{}'", paper.title);
+                    tracing::debug!("Tier6(PDF) hit for '{}'", paper.title);
                 }
                 Ok(_) => {
                     tier_empty_count += 1;
@@ -357,32 +392,26 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
             }
         }
 
-        // Tier 6: HTMLスクレイピング（＋LLMフォールバック）
-        if abstract_text.is_empty() {
-            pb.set_message(counts.build_msg(&ActiveTier::Html));
-            match html_scraper::fetch_abstract_via_html(&http_client, &paper.title, &paper.url)
-                .await
-            {
-                Ok(html_scraper::HtmlResult::Direct(text)) => {
-                    abstract_text = text;
-                    source = "html";
-                    tracing::debug!("Tier6a(HTML) hit for '{}'", paper.title);
-                }
-                Ok(html_scraper::HtmlResult::Llm(text)) => {
-                    abstract_text = text;
-                    source = "llm";
-                    tracing::debug!("Tier6b(LLM) hit for '{}'", paper.title);
-                }
-                Ok(html_scraper::HtmlResult::Empty) => {
-                    tier_empty_count += 1;
-                    tracing::debug!("HTML scraping returned empty for '{}'", paper.title);
-                }
-                Err(e) => {
-                    tier_error_count += 1;
-                    tracing::debug!("HTML scraping failed for '{}': {}", paper.title, e);
+        // Tier 7: LLM抽出（Tier 5で保持した本文テキストを使用）
+        if abstract_text.is_empty()
+            && let Some(ref main_text) = llm_text {
+                pb.set_message(counts.build_msg(&ActiveTier::Llm));
+                match html_scraper::extract_abstract_with_llm(&paper.title, main_text).await {
+                    Ok(html_scraper::HtmlResult::Llm(text)) => {
+                        abstract_text = text;
+                        source = "llm";
+                        tracing::debug!("Tier7(LLM) hit for '{}'", paper.title);
+                    }
+                    Ok(_) => {
+                        tier_empty_count += 1;
+                        tracing::debug!("LLM extraction returned empty for '{}'", paper.title);
+                    }
+                    Err(e) => {
+                        tier_error_count += 1;
+                        tracing::debug!("LLM extraction failed for '{}': {}", paper.title, e);
+                    }
                 }
             }
-        }
 
         // 結果の反映
         if !abstract_text.is_empty() {

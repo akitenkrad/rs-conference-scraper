@@ -11,17 +11,19 @@ pub enum HtmlResult {
     Direct(String),
     /// LLM経由で取得できた
     Llm(String),
+    /// 直接抽出は失敗したが，LLMに渡せる本文テキストがある
+    NeedLlm(String),
     /// 取得できなかった
     Empty,
 }
 
-/// 論文のURLからHTMLを取得し，abstractを抽出する
+/// 論文のURLからHTMLを取得し，abstractを直接抽出する
 ///
-/// 1. HTMLから直接abstractを抽出（metaタグ，abstract要素など）
-/// 2. 直接抽出できない場合，本文テキストをLLMに渡してabstractを抽出
+/// 直接抽出できない場合は `NeedLlm(main_text)` を返し，
+/// 呼び出し元が後でLLMティアに渡せるようにする
 pub async fn fetch_abstract_via_html(
     client: &Client,
-    title: &str,
+    _title: &str,
     url: &str,
 ) -> Result<HtmlResult> {
     // URLが空の場合はスキップ
@@ -71,7 +73,7 @@ pub async fn fetch_abstract_via_html(
         }
     }
 
-    // Step 2: メインテキストを抽出してLLMに渡す
+    // Step 2: メインテキストを保持して返す（LLMティアで使用）
     let main_text = extract_main_text(&document);
     if main_text.is_empty() {
         return Ok(HtmlResult::Empty);
@@ -79,8 +81,12 @@ pub async fn fetch_abstract_via_html(
 
     // テキストを3000文字に制限
     let truncated: String = main_text.chars().take(3000).collect();
+    Ok(HtmlResult::NeedLlm(truncated))
+}
 
-    match fetch_abstract_via_llm(title, &truncated).await {
+/// 保持済みの本文テキストからLLMでabstractを抽出する
+pub async fn extract_abstract_with_llm(title: &str, main_text: &str) -> Result<HtmlResult> {
+    match fetch_abstract_via_llm(title, main_text).await {
         Ok(text) if !text.is_empty() => Ok(HtmlResult::Llm(text)),
         Ok(_) => Ok(HtmlResult::Empty),
         Err(e) => {
@@ -93,25 +99,22 @@ pub async fn fetch_abstract_via_html(
 /// HTMLから直接abstractを抽出する
 fn try_direct_extraction(document: &Html) -> Option<String> {
     // 1. class/idに"abstract"を含む要素（最も信頼性が高い）
-    if let Some(text) = extract_abstract_element(document) {
-        if text.len() > 50 {
+    if let Some(text) = extract_abstract_element(document)
+        && text.len() > 50 {
             return Some(text);
         }
-    }
 
     // 2. <meta name="description"> or <meta property="og:description">
-    if let Some(text) = extract_meta_description(document) {
-        if text.len() > 50 {
+    if let Some(text) = extract_meta_description(document)
+        && text.len() > 50 {
             return Some(text);
         }
-    }
 
     // 3. "Abstract"見出しの後の<p>や<blockquote>
-    if let Some(text) = extract_abstract_after_heading(document) {
-        if text.len() > 50 {
+    if let Some(text) = extract_abstract_after_heading(document)
+        && text.len() > 50 {
             return Some(text);
         }
-    }
 
     None
 }
@@ -120,19 +123,17 @@ fn try_direct_extraction(document: &Html) -> Option<String> {
 fn extract_meta_description(document: &Html) -> Option<String> {
     // <meta name="description" content="...">
     let sel = Selector::parse(r#"meta[name="description"]"#).ok()?;
-    if let Some(el) = document.select(&sel).next() {
-        if let Some(content) = el.value().attr("content") {
+    if let Some(el) = document.select(&sel).next()
+        && let Some(content) = el.value().attr("content") {
             return Some(content.to_string());
         }
-    }
 
     // <meta property="og:description" content="...">
     let sel = Selector::parse(r#"meta[property="og:description"]"#).ok()?;
-    if let Some(el) = document.select(&sel).next() {
-        if let Some(content) = el.value().attr("content") {
+    if let Some(el) = document.select(&sel).next()
+        && let Some(content) = el.value().attr("content") {
             return Some(content.to_string());
         }
-    }
 
     None
 }
@@ -193,13 +194,11 @@ fn extract_main_text(document: &Html) -> String {
     if let Some(body) = document.select(&body_sel).next() {
         for el in body.descendants() {
             // script/style要素の中身はスキップ
-            if let Some(parent) = el.parent() {
-                if let Some(parent_el) = parent.value().as_element() {
-                    if parent_el.name() == "script" || parent_el.name() == "style" {
+            if let Some(parent) = el.parent()
+                && let Some(parent_el) = parent.value().as_element()
+                    && (parent_el.name() == "script" || parent_el.name() == "style") {
                         continue;
                     }
-                }
-            }
             if let Some(text) = el.value().as_text() {
                 let t = text.trim();
                 if !t.is_empty() {
