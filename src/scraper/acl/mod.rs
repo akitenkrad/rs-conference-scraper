@@ -79,11 +79,10 @@ impl AclAnthologyScraper {
         let suffix = format!(".{}.xml", self.venue_id);
         let mut years = HashSet::new();
         for entry in &entries {
-            if let Some(year_str) = entry.name.strip_suffix(&suffix) {
-                if let Ok(year) = year_str.parse::<u16>() {
+            if let Some(year_str) = entry.name.strip_suffix(&suffix)
+                && let Ok(year) = year_str.parse::<u16>() {
                     years.insert(year);
                 }
-            }
         }
 
         // Cache the result

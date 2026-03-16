@@ -172,14 +172,13 @@ fn extract_abstract_from_text(text: &str) -> Result<String> {
         r"(?i)\babstract\b[\s\.:—\-]*\n?([\s\S]+?)(?:\n\s*(?:1[\.\s]?\s*Introduction|Keywords|Index Terms|Categories|CCS Concepts|I\.\s+INTRODUCTION)\b|\z)"
     )?;
 
-    if let Some(caps) = abstract_re.captures(text) {
-        if let Some(m) = caps.get(1) {
+    if let Some(caps) = abstract_re.captures(text)
+        && let Some(m) = caps.get(1) {
             let abstract_text = normalize_pdf_text(m.as_str());
             if abstract_text.len() > 50 {
                 return Ok(abstract_text);
             }
         }
-    }
 
     Ok(String::new())
 }

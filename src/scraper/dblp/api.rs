@@ -39,14 +39,14 @@ pub struct DblpHits {
 #[serde(untagged)]
 pub enum HitField {
     Multiple(Vec<DblpHit>),
-    Single(DblpHit),
+    Single(Box<DblpHit>),
 }
 
 impl HitField {
     pub fn into_vec(self) -> Vec<DblpHit> {
         match self {
             HitField::Multiple(v) => v,
-            HitField::Single(h) => vec![h],
+            HitField::Single(h) => vec![*h],
         }
     }
 }

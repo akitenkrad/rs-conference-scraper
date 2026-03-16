@@ -113,11 +113,10 @@ fn extract_year_from_url(url: &str) -> Option<u16> {
             // Skip optional underscore separator (old format: cvpr_2013)
             let after = after.strip_prefix('_').unwrap_or(after);
             let year_str: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(year) = year_str.parse::<u16>() {
-                if (2000..=2030).contains(&year) {
+            if let Ok(year) = year_str.parse::<u16>()
+                && (2000..=2030).contains(&year) {
                     return Some(year);
                 }
-            }
             search_from = abs_pos;
         }
     }

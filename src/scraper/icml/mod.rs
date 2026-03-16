@@ -78,8 +78,8 @@ impl ConferenceScraper for IcmlScraper {
 fn extract_year_from_volume_url(url: &str) -> u16 {
     // URL pattern: .../v{VOLUME}/...
     for segment in url.split('/') {
-        if let Some(vol_str) = segment.strip_prefix('v') {
-            if let Ok(vol) = vol_str.parse::<u16>() {
+        if let Some(vol_str) = segment.strip_prefix('v')
+            && let Ok(vol) = vol_str.parse::<u16>() {
                 // Reverse lookup: volume -> year
                 for year in volumes::available_years() {
                     if volumes::year_to_volume(year) == Some(vol) {
@@ -87,7 +87,6 @@ fn extract_year_from_volume_url(url: &str) -> u16 {
                     }
                 }
             }
-        }
     }
     0
 }

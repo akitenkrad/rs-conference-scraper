@@ -48,11 +48,10 @@ fn compute_hash(title: &str, abstract_text: &str) -> String {
 }
 
 fn build_url(doi: Option<&str>, url: Option<&str>) -> String {
-    if let Some(doi) = doi {
-        if !doi.is_empty() {
+    if let Some(doi) = doi
+        && !doi.is_empty() {
             return format!("https://doi.org/{}", doi);
         }
-    }
     url.unwrap_or("").to_string()
 }
 

@@ -24,11 +24,10 @@ fn parse_years(html: &str) -> Result<Vec<u16>> {
             if href.contains("datasets-benchmarks") {
                 continue;
             }
-            if let Some(year_str) = href.strip_prefix("/paper_files/paper/") {
-                if let Ok(year) = year_str.trim_end_matches('/').parse::<u16>() {
+            if let Some(year_str) = href.strip_prefix("/paper_files/paper/")
+                && let Ok(year) = year_str.trim_end_matches('/').parse::<u16>() {
                     years.push(year);
                 }
-            }
         }
     }
 

@@ -66,8 +66,8 @@ fn parse_paper_detail(
 fn get_title(document: &Html) -> Option<String> {
     // Try h3 first (ePrint paper pages use h3 for the title)
     for sel_str in &["h3", "h2.paper-title", "h1"] {
-        if let Ok(selector) = Selector::parse(sel_str) {
-            if let Some(el) = document.select(&selector).next() {
+        if let Ok(selector) = Selector::parse(sel_str)
+            && let Some(el) = document.select(&selector).next() {
                 let text = el
                     .text()
                     .collect::<Vec<_>>()
@@ -78,7 +78,6 @@ fn get_title(document: &Html) -> Option<String> {
                     return Some(text);
                 }
             }
-        }
     }
     None
 }
@@ -97,8 +96,8 @@ fn get_authors(document: &Html) -> Option<Vec<String>> {
     }
 
     // Fallback: try <p class="authors"> or <div class="authors">
-    if let Ok(selector) = Selector::parse(".authors, p.authors, div.authors") {
-        if let Some(el) = document.select(&selector).next() {
+    if let Ok(selector) = Selector::parse(".authors, p.authors, div.authors")
+        && let Some(el) = document.select(&selector).next() {
             let raw = el
                 .text()
                 .collect::<Vec<_>>()
@@ -117,7 +116,6 @@ fn get_authors(document: &Html) -> Option<Vec<String>> {
                 }
             }
         }
-    }
 
     None
 }
@@ -133,8 +131,8 @@ fn get_abstract(document: &Html) -> String {
     ];
 
     for sel_str in &selectors {
-        if let Ok(selector) = Selector::parse(sel_str) {
-            if let Some(el) = document.select(&selector).next() {
+        if let Ok(selector) = Selector::parse(sel_str)
+            && let Some(el) = document.select(&selector).next() {
                 let text = el
                     .text()
                     .collect::<Vec<_>>()
@@ -153,7 +151,6 @@ fn get_abstract(document: &Html) -> String {
                     return cleaned;
                 }
             }
-        }
     }
 
     String::new()
@@ -189,9 +186,9 @@ fn get_categories(document: &Html) -> Vec<String> {
 
 fn get_pdf_url(document: &Html, detail_url: &str) -> Option<String> {
     // Try to find a direct PDF link first
-    if let Ok(selector) = Selector::parse("a[href$='.pdf']") {
-        if let Some(el) = document.select(&selector).next() {
-            if let Some(href) = el.value().attr("href") {
+    if let Ok(selector) = Selector::parse("a[href$='.pdf']")
+        && let Some(el) = document.select(&selector).next()
+            && let Some(href) = el.value().attr("href") {
                 if href.starts_with("http") {
                     return Some(href.to_string());
                 } else {
@@ -205,8 +202,6 @@ fn get_pdf_url(document: &Html, detail_url: &str) -> Option<String> {
                     return Some(format!("{}{}", base, path));
                 }
             }
-        }
-    }
 
     // Construct PDF URL from detail URL: /2024/001 -> /2024/001.pdf
     let pdf = format!("{}.pdf", detail_url.trim_end_matches('/'));

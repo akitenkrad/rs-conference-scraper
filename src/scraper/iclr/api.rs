@@ -313,9 +313,9 @@ async fn fetch_v1_legacy_2019(
                     r.invitation.ends_with("/Meta_Review")
                 });
 
-                if let Some(review) = meta_review {
-                    if let Some(ref rec) = review.content.recommendation {
-                        if rec.starts_with("Accept") {
+                if let Some(review) = meta_review
+                    && let Some(ref rec) = review.content.recommendation
+                        && rec.starts_with("Accept") {
                             let title = note.content.title.clone();
                             let authors = note.content.authors.clone().unwrap_or_default();
                             let abstract_text = note.content.r#abstract.clone().unwrap_or_default();
@@ -335,8 +335,6 @@ async fn fetch_v1_legacy_2019(
                                 hash: compute_hash(&title, &abstract_text),
                             });
                         }
-                    }
-                }
             }
         }
 

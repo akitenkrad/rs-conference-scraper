@@ -81,12 +81,11 @@ fn parse_inproceedings(node: &roxmltree::Node, conf_id: &str) -> Option<Paper> {
             }
             "ee" => {
                 // 最初の <ee> のみ使用
-                if !ee_found {
-                    if let Some(text) = child.text() {
+                if !ee_found
+                    && let Some(text) = child.text() {
                         ee_url = text.trim().to_string();
                         ee_found = true;
                     }
-                }
             }
             _ => {}
         }

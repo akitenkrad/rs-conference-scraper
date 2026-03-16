@@ -70,15 +70,12 @@ fn extract_year_from_url(url: &str) -> Option<u16> {
     // URL pattern: .../paper_files/paper/{YEAR}/hash/...
     let parts: Vec<&str> = url.split('/').collect();
     for (i, part) in parts.iter().enumerate() {
-        if *part == "paper" {
-            if let Some(next) = parts.get(i + 1) {
-                if let Ok(year) = next.parse::<u16>() {
-                    if (1980..=2030).contains(&year) {
+        if *part == "paper"
+            && let Some(next) = parts.get(i + 1)
+                && let Ok(year) = next.parse::<u16>()
+                    && (1980..=2030).contains(&year) {
                         return Some(year);
                     }
-                }
-            }
-        }
     }
     None
 }

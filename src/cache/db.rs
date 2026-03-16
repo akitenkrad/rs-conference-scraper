@@ -114,8 +114,8 @@ impl CacheDb {
             sql.push_str(&format!(" AND conference=?{}", params_vec.len() + 1));
             params_vec.push(Box::new(conf.to_string()));
         }
-        if let Some(yrs) = years {
-            if !yrs.is_empty() {
+        if let Some(yrs) = years
+            && !yrs.is_empty() {
                 let placeholders: Vec<String> = yrs
                     .iter()
                     .enumerate()
@@ -126,7 +126,6 @@ impl CacheDb {
                     params_vec.push(Box::new(*y as i64));
                 }
             }
-        }
         sql.push_str(" ORDER BY year DESC, title ASC");
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -387,8 +386,8 @@ impl CacheDb {
             params_vec.push(Box::new(conf.to_string()));
             clauses.push(format!("conference=?{}", params_vec.len()));
         }
-        if let Some(yrs) = years {
-            if !yrs.is_empty() {
+        if let Some(yrs) = years
+            && !yrs.is_empty() {
                 let placeholders: Vec<String> = yrs
                     .iter()
                     .enumerate()
@@ -399,7 +398,6 @@ impl CacheDb {
                     params_vec.push(Box::new(*y as i64));
                 }
             }
-        }
 
         let where_clause = if clauses.is_empty() {
             String::new()
@@ -425,8 +423,8 @@ impl CacheDb {
             sql.push_str(&format!(" AND conference=?{}", params_vec.len() + 1));
             params_vec.push(Box::new(conf.to_string()));
         }
-        if let Some(yrs) = years {
-            if !yrs.is_empty() {
+        if let Some(yrs) = years
+            && !yrs.is_empty() {
                 let placeholders: Vec<String> = yrs
                     .iter()
                     .enumerate()
@@ -437,7 +435,6 @@ impl CacheDb {
                     params_vec.push(Box::new(*y as i64));
                 }
             }
-        }
         sql.push_str(" ORDER BY year DESC, title ASC");
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =

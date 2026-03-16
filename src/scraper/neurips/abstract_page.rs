@@ -140,14 +140,13 @@ fn get_abstract(document: &Html) -> String {
     ];
 
     for sel_str in &selectors {
-        if let Ok(selector) = Selector::parse(sel_str) {
-            if let Some(el) = document.select(&selector).next() {
+        if let Ok(selector) = Selector::parse(sel_str)
+            && let Some(el) = document.select(&selector).next() {
                 let text = el.text().collect::<Vec<_>>().join(" ").trim().to_string();
                 if !text.is_empty() {
                     return text;
                 }
             }
-        }
     }
 
     String::new()

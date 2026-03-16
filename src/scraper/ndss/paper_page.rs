@@ -124,9 +124,9 @@ fn get_authors(document: &Html) -> Option<Vec<String>> {
 fn get_abstract(document: &Html) -> String {
     // The abstract is in <div class="paper-data">, typically the second (or last)
     // paragraph that is not inside <strong> and is longer than a threshold.
-    if let Ok(selector) = Selector::parse("div.paper-data") {
-        if let Some(paper_data) = document.select(&selector).next() {
-            if let Ok(p_sel) = Selector::parse("p") {
+    if let Ok(selector) = Selector::parse("div.paper-data")
+        && let Some(paper_data) = document.select(&selector).next()
+            && let Ok(p_sel) = Selector::parse("p") {
                 let paragraphs: Vec<String> = paper_data
                     .select(&p_sel)
                     .map(|p| p.text().collect::<Vec<_>>().join(" ").trim().to_string())
@@ -147,8 +147,6 @@ fn get_abstract(document: &Html) -> String {
                     return paragraphs.last().unwrap_or(&String::new()).clone();
                 }
             }
-        }
-    }
 
     // Fallback: look for common abstract selectors
     let selectors = [
@@ -159,14 +157,13 @@ fn get_abstract(document: &Html) -> String {
     ];
 
     for sel_str in &selectors {
-        if let Ok(selector) = Selector::parse(sel_str) {
-            if let Some(el) = document.select(&selector).next() {
+        if let Ok(selector) = Selector::parse(sel_str)
+            && let Some(el) = document.select(&selector).next() {
                 let text = el.text().collect::<Vec<_>>().join(" ").trim().to_string();
                 if !text.is_empty() {
                     return text;
                 }
             }
-        }
     }
 
     String::new()
@@ -174,22 +171,19 @@ fn get_abstract(document: &Html) -> String {
 
 fn get_pdf_url(document: &Html) -> Option<String> {
     // Look for .pdf-button link first
-    if let Ok(selector) = Selector::parse("a.pdf-button") {
-        if let Some(el) = document.select(&selector).next() {
-            if let Some(href) = el.value().attr("href") {
+    if let Ok(selector) = Selector::parse("a.pdf-button")
+        && let Some(el) = document.select(&selector).next()
+            && let Some(href) = el.value().attr("href") {
                 return Some(href.to_string());
             }
-        }
-    }
 
     // Fallback: any link to a .pdf file in wp-content/uploads
     if let Ok(selector) = Selector::parse("a[href*='wp-content/uploads']") {
         for el in document.select(&selector) {
-            if let Some(href) = el.value().attr("href") {
-                if href.ends_with(".pdf") && !href.contains("slides") {
+            if let Some(href) = el.value().attr("href")
+                && href.ends_with(".pdf") && !href.contains("slides") {
                     return Some(href.to_string());
                 }
-            }
         }
     }
 

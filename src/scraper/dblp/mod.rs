@@ -51,11 +51,10 @@ impl DblpScraper {
     /// 指定年の論文がキャッシュになければ DBLP から取得してキャッシュに保存
     async fn ensure_year_cached(&self, client: &reqwest::Client, year: u16) -> Result<()> {
         {
-            if let Some(years) = self.cached_years.read().await.as_ref() {
-                if years.contains(&year) {
+            if let Some(years) = self.cached_years.read().await.as_ref()
+                && years.contains(&year) {
                     return Ok(());
                 }
-            }
         }
 
         let papers = api::fetch_papers_for_year(

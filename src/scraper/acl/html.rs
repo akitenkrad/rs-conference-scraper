@@ -18,14 +18,13 @@ pub fn parse_event_page(html: &str, _conference: &str, _year: u16) -> Result<Vec
     // We collect all volume sections with their h4 text.
     let mut volume_tracks: Vec<(String, String)> = Vec::new(); // (section_id, track_name)
     for section in document.select(&volume_section_selector) {
-        if let Some(id) = section.value().attr("id") {
-            if let Some(h4) = section.select(&volume_header_selector).next() {
+        if let Some(id) = section.value().attr("id")
+            && let Some(h4) = section.select(&volume_header_selector).next() {
                 let track_name = h4.text().collect::<Vec<_>>().join(" ").trim().to_string();
                 if !track_name.is_empty() {
                     volume_tracks.push((id.to_string(), track_name));
                 }
             }
-        }
     }
 
     let mut entries = Vec::new();

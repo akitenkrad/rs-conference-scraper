@@ -235,8 +235,8 @@ async fn main() -> Result<()> {
                         println!("No cached data found.");
                     } else {
                         println!(
-                            "{:<12} {:<6} {:<8} {:<22} {}",
-                            "Conference", "Year", "Papers", "Last Synced", "Status"
+                            "{:<12} {:<6} {:<8} {:<22} Status",
+                            "Conference", "Year", "Papers", "Last Synced"
                         );
                         println!("{}", "-".repeat(60));
                         for s in &statuses {
@@ -329,9 +329,9 @@ fn print_ascii_table(headers: &[&str], rows: &[Vec<String>]) {
 }
 
 fn resolve_cache_dir(path: &str) -> Result<std::path::PathBuf> {
-    if path.starts_with("~/") {
+    if let Some(stripped) = path.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
-            Ok(home.join(&path[2..]))
+            Ok(home.join(stripped))
         } else {
             Ok(std::path::PathBuf::from(path))
         }

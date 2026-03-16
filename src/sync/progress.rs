@@ -32,11 +32,8 @@ impl SyncProgress {
     /// 年度レベルの進捗バーを開始
     pub fn start_years(&mut self, total: u64) -> ProgressBar {
         let pb = self.multi.add(ProgressBar::new(total));
-        let template = if self.prefix.is_empty() {
-            "{prefix:.bold} [{bar:30.cyan/blue}] {pos}/{len} years ({eta})".to_string()
-        } else {
-            "{prefix:.bold} [{bar:30.cyan/blue}] {pos}/{len} years ({eta})".to_string()
-        };
+        let template =
+            "{prefix:.bold} [{bar:30.cyan/blue}] {pos}/{len} years ({eta})".to_string();
         pb.set_style(
             ProgressStyle::with_template(&template)
                 .unwrap()

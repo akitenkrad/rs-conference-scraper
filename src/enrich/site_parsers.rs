@@ -166,8 +166,8 @@ fn parse_ieee_xplore(raw_html: &str) -> Option<String> {
     let bytes = raw_html.as_bytes();
     let mut depth = 0;
     let mut end = start;
-    for i in start..bytes.len() {
-        match bytes[i] {
+    for (i, &b) in bytes.iter().enumerate().skip(start) {
+        match b {
             b'{' => depth += 1,
             b'}' => {
                 depth -= 1;

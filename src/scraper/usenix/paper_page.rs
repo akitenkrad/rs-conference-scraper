@@ -154,11 +154,10 @@ fn extract_abstract(document: &Html) -> String {
 
 fn extract_pdf_url(document: &Html) -> Option<String> {
     // Look for links ending in .pdf
-    if let Ok(selector) = Selector::parse("a[href$='.pdf']") {
-        if let Some(el) = document.select(&selector).next() {
+    if let Ok(selector) = Selector::parse("a[href$='.pdf']")
+        && let Some(el) = document.select(&selector).next() {
             return el.value().attr("href").map(|s| s.to_string());
         }
-    }
     None
 }
 

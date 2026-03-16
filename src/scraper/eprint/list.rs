@@ -52,8 +52,8 @@ fn parse_paper_list(html: &str, base_url: &str, year: u16) -> Result<Vec<PaperLi
     }
 
     // Strategy 2: If no items found, try table rows (some years use tables)
-    if entries.is_empty() {
-        if let Ok(row_sel) = Selector::parse("tr") {
+    if entries.is_empty()
+        && let Ok(row_sel) = Selector::parse("tr") {
             let link_sel = Selector::parse("a").unwrap();
             for row in document.select(&row_sel) {
                 if let Some(entry) = parse_table_row(&row, base_url, year, &link_sel) {
@@ -61,7 +61,6 @@ fn parse_paper_list(html: &str, base_url: &str, year: u16) -> Result<Vec<PaperLi
                 }
             }
         }
-    }
 
     // Strategy 3: Fallback - find all links matching /{YEAR}/{NUMBER} pattern
     if entries.is_empty() {
@@ -207,8 +206,8 @@ fn parse_table_row(
 /// Extract authors from a container element
 fn extract_authors_from_container(item: &scraper::ElementRef) -> Vec<String> {
     // Try .authors class first
-    if let Ok(sel) = Selector::parse(".authors, i, em") {
-        if let Some(el) = item.select(&sel).next() {
+    if let Ok(sel) = Selector::parse(".authors, i, em")
+        && let Some(el) = item.select(&sel).next() {
             let raw = el
                 .text()
                 .collect::<Vec<_>>()
@@ -219,7 +218,6 @@ fn extract_authors_from_container(item: &scraper::ElementRef) -> Vec<String> {
                 return parse_author_names(&raw);
             }
         }
-    }
     Vec::new()
 }
 
