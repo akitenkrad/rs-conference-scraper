@@ -123,8 +123,8 @@ impl TierCounts {
             self.colored_count("OA", self.oa),
             self.colored_count("arXiv", self.arxiv),
             self.colored_count("CR", self.cr),
-            self.colored_count("PDF", self.pdf),
             self.colored_count("HTML", self.html),
+            self.colored_count("PDF", self.pdf),
             self.colored_count("LLM", self.llm),
             self.skip.total(),
             self.skip.all_empty,
@@ -448,14 +448,14 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
 
     let skip = &counts.skip;
     println!(
-        "Enrichment complete: {} enriched (S2: {}, OA: {}, arXiv: {}, CR: {}, PDF: {}, HTML: {}, LLM: {}), {} skipped (all_empty: {}, all_error: {}, no_llm_key: {}, mixed: {})",
+        "Enrichment complete: {} enriched (S2: {}, OA: {}, arXiv: {}, CR: {}, HTML: {}, PDF: {}, LLM: {}), {} skipped (all_empty: {}, all_error: {}, no_llm_key: {}, mixed: {})",
         counts.total_enriched(),
         counts.s2,
         counts.oa,
         counts.arxiv,
         counts.cr,
-        counts.pdf,
         counts.html,
+        counts.pdf,
         counts.llm,
         skip.total(),
         skip.all_empty,
