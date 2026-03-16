@@ -138,10 +138,22 @@ async fn try_fetch_and_extract(client: &Client, url: &str) -> Result<String> {
         return Ok(String::new());
     }
 
-    let pages = match pdf_extract::extract_text_from_mem_by_pages(&bytes) {
-        Ok(p) => p,
-        Err(e) => {
+    let bytes_clone = bytes.to_vec();
+    let extraction = tokio::task::spawn_blocking(move || {
+        std::panic::catch_unwind(|| {
+            pdf_extract::extract_text_from_mem_by_pages(&bytes_clone)
+        })
+    })
+    .await?;
+
+    let pages = match extraction {
+        Ok(Ok(p)) => p,
+        Ok(Err(e)) => {
             tracing::debug!("PDF text extraction failed for '{}': {}", url, e);
+            return Ok(String::new());
+        }
+        Err(_) => {
+            tracing::warn!("PDF text extraction panicked for '{}' (malformed PDF)", url);
             return Ok(String::new());
         }
     };
