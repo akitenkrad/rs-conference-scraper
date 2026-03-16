@@ -3,6 +3,7 @@ mod crossref;
 mod html_scraper;
 mod openalex;
 mod pdf;
+mod site_parsers;
 
 use crate::cache::CacheDb;
 use crate::cli::EnrichArgs;
@@ -206,6 +207,7 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
     // HTTP クライアント（全ティアで共有）
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .user_agent("conf-scraper/0.1 (academic research tool)")
         .build()
         .context("Failed to create HTTP client")?;
 

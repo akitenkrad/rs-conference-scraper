@@ -1,3 +1,4 @@
+use super::site_parsers;
 use anyhow::Result;
 use openai_tools::common::models::ChatModel;
 use openai_tools::responses::request::Responses;
@@ -41,6 +42,9 @@ pub async fn fetch_abstract_via_html(
         return Ok(HtmlResult::Empty);
     }
 
+    // リダイレクト後の最終URLを取得（DOI → 出版社サイトの解決用）
+    let final_url = resp.url().to_string();
+
     let body = match resp.text().await {
         Ok(b) => b,
         Err(e) => {
@@ -50,6 +54,14 @@ pub async fn fetch_abstract_via_html(
     };
 
     let document = Html::parse_document(&body);
+
+    // Step 0: サイト固有パーサを試行
+    if let Some(abstract_text) = site_parsers::try_site_specific_extraction(&final_url, &body, &document) {
+        let trimmed = abstract_text.trim().to_string();
+        if trimmed.len() > 50 {
+            return Ok(HtmlResult::Direct(trimmed));
+        }
+    }
 
     // Step 1: 直接抽出を試みる
     if let Some(abstract_text) = try_direct_extraction(&document) {
