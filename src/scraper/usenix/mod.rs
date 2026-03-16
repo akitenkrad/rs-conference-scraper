@@ -45,6 +45,10 @@ impl ConferenceScraper for UsenixScraper {
         "USENIX Security"
     }
 
+    fn backend_id(&self) -> &str {
+        "usenix"
+    }
+
     async fn fetch_years(&self, _client: &reqwest::Client) -> Result<Vec<u16>> {
         Ok(years::available_years())
     }

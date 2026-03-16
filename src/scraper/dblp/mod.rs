@@ -90,6 +90,10 @@ impl ConferenceScraper for DblpScraper {
         &self.conf_name
     }
 
+    fn backend_id(&self) -> &str {
+        "dblp"
+    }
+
     async fn fetch_years(&self, _client: &reqwest::Client) -> Result<Vec<u16>> {
         Ok((self.year_range.0..=self.year_range.1).collect())
     }

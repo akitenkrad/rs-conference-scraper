@@ -40,6 +40,10 @@ impl ConferenceScraper for IcmlScraper {
         "ICML"
     }
 
+    fn backend_id(&self) -> &str {
+        "openreview"
+    }
+
     async fn fetch_years(&self, _client: &reqwest::Client) -> Result<Vec<u16>> {
         Ok(volumes::available_years())
     }

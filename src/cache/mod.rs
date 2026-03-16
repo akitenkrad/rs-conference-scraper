@@ -13,7 +13,7 @@ impl CacheDb {
         let db_path = cache_dir.join("cache.db");
         std::fs::create_dir_all(cache_dir)?;
         let conn = Connection::open(&db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=30000;")?;
         Self::migrate(&conn)?;
         Ok(Self { conn })
     }

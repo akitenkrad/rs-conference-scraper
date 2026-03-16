@@ -1,6 +1,5 @@
 pub mod list;
 pub mod paper_page;
-pub mod years;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -11,19 +10,19 @@ use tokio::sync::RwLock;
 use crate::conference::ConferenceScraper;
 use crate::types::{Paper, PaperListEntry};
 
-const DEFAULT_INTERVAL: Duration = Duration::from_millis(1500);
+const DEFAULT_INTERVAL: Duration = Duration::from_millis(2000);
 
-pub struct NdssScraper {
+pub struct EprintScraper {
     base_url: String,
     interval: Duration,
     /// fetch_paper_list で設定された年を保持し fetch_paper_detail で参照する
     current_year: Arc<RwLock<u16>>,
 }
 
-impl NdssScraper {
+impl EprintScraper {
     pub fn new() -> Self {
         Self {
-            base_url: "https://www.ndss-symposium.org".to_string(),
+            base_url: "https://eprint.iacr.org".to_string(),
             interval: DEFAULT_INTERVAL,
             current_year: Arc::new(RwLock::new(0)),
         }
@@ -36,21 +35,21 @@ impl NdssScraper {
 }
 
 #[async_trait]
-impl ConferenceScraper for NdssScraper {
+impl ConferenceScraper for EprintScraper {
     fn id(&self) -> &str {
-        "ndss"
+        "eprint"
     }
 
     fn name(&self) -> &str {
-        "NDSS"
+        "IACR ePrint"
     }
 
     fn backend_id(&self) -> &str {
-        "ndss"
+        "eprint"
     }
 
     async fn fetch_years(&self, _client: &reqwest::Client) -> Result<Vec<u16>> {
-        Ok(years::available_years())
+        Ok((1996..=2025).collect())
     }
 
     async fn fetch_paper_list(
@@ -58,7 +57,6 @@ impl ConferenceScraper for NdssScraper {
         client: &reqwest::Client,
         year: u16,
     ) -> Result<Vec<PaperListEntry>> {
-        // Store the current year for use in fetch_paper_detail
         {
             let mut y = self.current_year.write().await;
             *y = year;
@@ -82,22 +80,23 @@ mod tests {
 
     #[test]
     fn test_scraper_id() {
-        let scraper = NdssScraper::new();
-        assert_eq!(scraper.id(), "ndss");
+        let scraper = EprintScraper::new();
+        assert_eq!(scraper.id(), "eprint");
     }
 
     #[test]
     fn test_scraper_name() {
-        let scraper = NdssScraper::new();
-        assert_eq!(scraper.name(), "NDSS");
+        let scraper = EprintScraper::new();
+        assert_eq!(scraper.name(), "IACR ePrint");
     }
 
     #[tokio::test]
     async fn test_fetch_years() {
-        let scraper = NdssScraper::new();
+        let scraper = EprintScraper::new();
         let client = reqwest::Client::new();
         let years = scraper.fetch_years(&client).await.unwrap();
-        assert!(years.contains(&2024));
-        assert!(years.contains(&2014));
+        assert!(years.contains(&1996));
+        assert!(years.contains(&2025));
+        assert_eq!(years.len(), 30);
     }
 }

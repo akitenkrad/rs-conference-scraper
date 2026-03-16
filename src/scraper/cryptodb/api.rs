@@ -8,6 +8,12 @@ use crate::types::{compute_id, Paper, PaperListEntry};
 // CryptoDB API レスポンス構造体
 // ---------------------------------------------------------------------------
 
+/// CryptoDB API は `{"papers": [...]}` 形式でレスポンスを返す
+#[derive(Debug, Deserialize)]
+pub struct CryptoDbResponse {
+    pub papers: Vec<CryptoDbPaper>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CryptoDbPaper {
     pub title: String,
@@ -26,7 +32,7 @@ pub struct CryptoDbPaper {
     #[allow(dead_code)]
     pub pubkey: Option<u64>,
     #[allow(dead_code)]
-    pub pages: Option<String>,
+    pub pages: Option<serde_json::Value>,
     #[allow(dead_code)]
     pub youtube: Option<String>,
 }
@@ -67,7 +73,13 @@ pub fn parse_response(
     venue_id: &str,
     year: u16,
 ) -> Result<Vec<(PaperListEntry, Paper)>> {
-    let papers: Vec<CryptoDbPaper> = serde_json::from_str(json_body)?;
+    // CryptoDB API は `{"papers": [...]}` または直接 `[...]` で返す場合がある
+    let papers: Vec<CryptoDbPaper> = if json_body.trim_start().starts_with('{') {
+        let resp: CryptoDbResponse = serde_json::from_str(json_body)?;
+        resp.papers
+    } else {
+        serde_json::from_str(json_body)?
+    };
 
     let results = papers
         .into_iter()
@@ -222,7 +234,39 @@ mod tests {
     #[test]
     fn test_parse_empty_response() {
         let json = "[]";
+        let results = parse_response(json, "crypto", 2020).unwrap();
+        assert!(results.is_empty());
+    }
 
+    #[test]
+    fn test_parse_wrapped_response() {
+        // CryptoDB API は `{"papers": [...]}` 形式でレスポンスを返す
+        let json = r#"{
+            "papers": [
+                {
+                    "pubkey": 3001,
+                    "title": "Wrapped Paper",
+                    "authors": ["Author One"],
+                    "abstract": null,
+                    "DOI": "10.1007/test",
+                    "year": 2024,
+                    "venue": "crypto",
+                    "pages": 42,
+                    "URL": null,
+                    "youtube": null,
+                    "award": null
+                }
+            ]
+        }"#;
+
+        let results = parse_response(json, "crypto", 2024).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.title, "Wrapped Paper");
+    }
+
+    #[test]
+    fn test_parse_wrapped_empty_response() {
+        let json = r#"{"papers": []}"#;
         let results = parse_response(json, "crypto", 2020).unwrap();
         assert!(results.is_empty());
     }

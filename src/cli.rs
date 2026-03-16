@@ -30,15 +30,17 @@ pub enum Commands {
     },
     /// 収集済み論文の統計情報を表示
     Stats(StatsArgs),
+    /// Semantic Scholarでメタデータを補完
+    Enrich(EnrichArgs),
     /// 対応会議の一覧表示
     ListConferences,
 }
 
 #[derive(Args)]
 pub struct SyncArgs {
-    /// 会議ID (必須)
-    #[arg(long)]
-    pub conference: String,
+    /// 会議ID (カンマ区切りで複数指定可)
+    #[arg(long, value_delimiter = ',')]
+    pub conference: Vec<String>,
 
     /// 対象年度 (例: 2020-2024 または 2024)
     #[arg(long)]
@@ -70,6 +72,30 @@ pub struct SyncArgs {
 }
 
 #[derive(Args)]
+#[command(after_long_help = r#"Examples:
+  # キーワードでフィルタリング
+  conf-scraper filter --filter keyword --keywords transformer,attention
+
+  # 特定の会議・年度に絞ってキーワード検索
+  conf-scraper filter --conference neurips --year 2024 --filter keyword --keywords "large language model"
+
+  # カテゴリタグでフィルタリング (Oral発表のみ)
+  conf-scraper filter --conference iclr --year 2024 --filter category --tags oral
+
+  # キーワードとカテゴリの組み合わせ (AND結合)
+  conf-scraper filter --filter keyword,category --keywords transformer --tags oral
+
+  # キーワードとカテゴリの組み合わせ (OR結合)
+  conf-scraper filter --filter keyword,category --keywords transformer --tags oral --combine or
+
+  # タイトルのみを検索対象にする
+  conf-scraper filter --filter keyword --keywords diffusion --fields title
+
+  # 出力件数を制限してJSONファイルに保存
+  conf-scraper filter --filter keyword --keywords reinforcement --limit 20 --output results.json
+
+  # 複数年度を指定
+  conf-scraper filter --conference cvpr --year 2020-2024 --filter keyword --keywords "object detection""#)]
 pub struct FilterArgs {
     /// 会議ID (省略時: 全会議)
     #[arg(long)]
@@ -91,14 +117,6 @@ pub struct FilterArgs {
     #[arg(long, value_delimiter = ',', default_value = "title,abstract")]
     pub fields: Vec<String>,
 
-    /// LLMスコアリング用テーマ説明
-    #[arg(long)]
-    pub theme: Option<String>,
-
-    /// LLMスコア閾値
-    #[arg(long, default_value = "0.7")]
-    pub threshold: f64,
-
     /// カテゴリタグ (カンマ区切り)
     #[arg(long, value_delimiter = ',')]
     pub tags: Vec<String>,
@@ -107,17 +125,21 @@ pub struct FilterArgs {
     #[arg(long, default_value = "and")]
     pub combine: String,
 
+    /// 出力する論文の最大数 (0で無制限)
+    #[arg(long, default_value = "20")]
+    pub limit: usize,
+
     /// 出力先JSONファイル
     #[arg(long)]
     pub output: Option<PathBuf>,
 
+    /// 出力形式 [json|csv|xml] (デフォルト: json)
+    #[arg(long, default_value = "json")]
+    pub format: String,
+
     /// キャッシュ未存在時にエラー
     #[arg(long)]
     pub offline: bool,
-
-    /// Anthropic APIキー
-    #[arg(long, env = "ANTHROPIC_API_KEY")]
-    pub api_key: Option<String>,
 }
 
 #[derive(Args)]
@@ -129,6 +151,41 @@ pub struct StatsArgs {
     /// 対象年度
     #[arg(long)]
     pub year: Option<String>,
+
+    /// 表示するセクション [summary,conferences,years,categories,authors,abstracts] (カンマ区切り，省略時: 全表示)
+    #[arg(long, value_delimiter = ',')]
+    pub show: Vec<String>,
+}
+
+#[derive(Args)]
+pub struct EnrichArgs {
+    /// 会議ID (カンマ区切りで複数指定可)
+    #[arg(long, value_delimiter = ',')]
+    pub conference: Vec<String>,
+
+    /// 対象年度 (例: 2020-2024 または 2024)
+    #[arg(long)]
+    pub year: Option<String>,
+
+    /// abstract取得済みの論文も再取得
+    #[arg(long)]
+    pub force: bool,
+
+    /// リトライ回数
+    #[arg(long, default_value = "3")]
+    pub retry: u64,
+
+    /// リトライ時の待機秒数
+    #[arg(long, default_value = "10")]
+    pub wait: u64,
+
+    /// リクエスト間隔秒数
+    #[arg(long, default_value = "1.0")]
+    pub interval: f64,
+
+    /// 中間保存の間隔 (N件ごと)
+    #[arg(long, default_value = "50")]
+    pub checkpoint: usize,
 }
 
 #[derive(Subcommand)]

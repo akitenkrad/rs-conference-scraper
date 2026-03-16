@@ -38,8 +38,10 @@ pub fn parse_paper_list(html: &str, base_url: &str) -> Vec<PaperListEntry> {
             Some(href) => {
                 if href.starts_with("http") {
                     href.to_string()
-                } else {
+                } else if href.starts_with('/') {
                     format!("{}{}", base_url, href)
+                } else {
+                    format!("{}/{}", base_url, href)
                 }
             }
             None => continue,
@@ -75,8 +77,10 @@ pub fn parse_paper_list(html: &str, base_url: &str) -> Vec<PaperListEntry> {
                             if let Some(href) = pdf_a.value().attr("href") {
                                 pdf_url = Some(if href.starts_with("http") {
                                     href.to_string()
-                                } else {
+                                } else if href.starts_with('/') {
                                     format!("{}{}", base_url, href)
+                                } else {
+                                    format!("{}/{}", base_url, href)
                                 });
                             }
                         }
@@ -95,6 +99,32 @@ pub fn parse_paper_list(html: &str, base_url: &str) -> Vec<PaperListEntry> {
     }
 
     entries
+}
+
+/// インデックスページから日別ページへのリンクを抽出する
+/// (例: CVPR2018.py?day=2018-06-19)
+pub fn parse_day_links(html: &str, base_url: &str) -> Vec<String> {
+    let document = Html::parse_document(html);
+    let a_selector = Selector::parse("a").unwrap();
+
+    let mut day_urls = Vec::new();
+    for a in document.select(&a_selector) {
+        if let Some(href) = a.value().attr("href") {
+            if href.contains("?day=") && href.contains(".py") {
+                let url = if href.starts_with("http") {
+                    href.to_string()
+                } else if href.starts_with('/') {
+                    format!("{}{}", base_url, href)
+                } else {
+                    format!("{}/{}", base_url, href)
+                };
+                if !day_urls.contains(&url) {
+                    day_urls.push(url);
+                }
+            }
+        }
+    }
+    day_urls
 }
 
 #[cfg(test)]

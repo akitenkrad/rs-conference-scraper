@@ -7,6 +7,7 @@ pub mod acl;
 pub mod cryptodb;
 pub mod cvf;
 pub mod dblp;
+pub mod eprint;
 pub mod iclr;
 pub mod icml;
 pub mod ndss;
@@ -39,15 +40,49 @@ pub fn build_http_client() -> Result<reqwest::Client> {
         .map_err(Into::into)
 }
 
-/// GETリクエスト + レスポンス取得 + Sleep
+/// GETリクエスト + レスポンス取得 + Sleep（リトライ付き）
 pub async fn fetch_with_sleep(
     client: &reqwest::Client,
     url: &str,
     interval: Duration,
 ) -> Result<String> {
+    fetch_with_retry(client, url, interval, 3).await
+}
+
+/// GETリクエスト + レスポンス取得 + Sleep + リトライ
+pub async fn fetch_with_retry(
+    client: &reqwest::Client,
+    url: &str,
+    interval: Duration,
+    max_retries: usize,
+) -> Result<String> {
     tracing::debug!("GET {}", url);
-    let resp = client.get(url).send().await?.error_for_status()?;
-    let body = resp.text().await?;
-    tokio::time::sleep(interval).await;
-    Ok(body)
+    let mut last_err = None;
+    for attempt in 0..=max_retries {
+        if attempt > 0 {
+            let backoff = Duration::from_secs(2u64.pow(attempt as u32));
+            tracing::debug!("Retry {}/{} after {:?} for {}", attempt, max_retries, backoff, url);
+            tokio::time::sleep(backoff).await;
+        }
+        match client.get(url).send().await {
+            Ok(resp) => match resp.error_for_status() {
+                Ok(resp) => {
+                    let body = resp.text().await?;
+                    tokio::time::sleep(interval).await;
+                    return Ok(body);
+                }
+                Err(e) => {
+                    // 4xx はリトライしない（429 Too Many Requests を除く）
+                    if e.status().is_some_and(|s| s.is_client_error() && s.as_u16() != 429) {
+                        return Err(e.into());
+                    }
+                    last_err = Some(e.into());
+                }
+            },
+            Err(e) => {
+                last_err = Some(e.into());
+            }
+        }
+    }
+    Err(last_err.unwrap())
 }

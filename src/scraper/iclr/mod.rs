@@ -41,6 +41,10 @@ impl ConferenceScraper for IclrScraper {
         "ICLR"
     }
 
+    fn backend_id(&self) -> &str {
+        "openreview"
+    }
+
     async fn fetch_years(&self, _client: &reqwest::Client) -> Result<Vec<u16>> {
         Ok(vec![2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025])
     }

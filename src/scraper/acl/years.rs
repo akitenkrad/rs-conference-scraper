@@ -16,7 +16,7 @@ pub async fn fetch_years(
 }
 
 fn parse_years(html: &str, venue_id: &str) -> Result<Vec<u16>> {
-    let re = Regex::new(&format!(r#"href="/events/{}-(\d{{4}})/""#, regex::escape(venue_id)))?;
+    let re = Regex::new(&format!(r#"href="?/events/{}-(\d{{4}})/"?"#, regex::escape(venue_id)))?;
     let mut years: Vec<u16> = re
         .captures_iter(html)
         .filter_map(|cap| cap[1].parse::<u16>().ok())
@@ -44,6 +44,21 @@ mod tests {
         "#;
         let years = parse_years(html, "acl").unwrap();
         assert_eq!(years, vec![2022, 2023, 2024]);
+    }
+
+    #[test]
+    fn test_parse_years_unquoted_href() {
+        let html = r#"
+        <html><body>
+        <div>
+            <h4><a href=/events/acl-2025/>2025</a></h4>
+            <h4><a href=/events/acl-2024/>2024</a></h4>
+            <h4><a href=/events/acl-2023/>2023</a></h4>
+        </div>
+        </body></html>
+        "#;
+        let years = parse_years(html, "acl").unwrap();
+        assert_eq!(years, vec![2023, 2024, 2025]);
     }
 
     #[test]

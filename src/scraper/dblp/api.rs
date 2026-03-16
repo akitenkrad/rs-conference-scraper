@@ -30,7 +30,25 @@ pub struct DblpHits {
     #[allow(dead_code)]
     #[serde(rename = "@first")]
     pub first: String,
-    pub hit: Option<Vec<DblpHit>>,
+    /// `hit` は配列または単一オブジェクトの場合がある（結果が1件の場合）
+    pub hit: Option<HitField>,
+}
+
+/// DBLP API は結果が1件の場合にオブジェクト，複数件の場合に配列を返す
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum HitField {
+    Multiple(Vec<DblpHit>),
+    Single(DblpHit),
+}
+
+impl HitField {
+    pub fn into_vec(self) -> Vec<DblpHit> {
+        match self {
+            HitField::Multiple(v) => v,
+            HitField::Single(h) => vec![h],
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,8 +60,9 @@ pub struct DblpHit {
 pub struct DblpInfo {
     pub title: Option<String>,
     pub authors: Option<DblpAuthors>,
+    /// `venue` は文字列または配列の場合がある（複数 venue に属する場合）
     #[allow(dead_code)]
-    pub venue: Option<String>,
+    pub venue: Option<VenueField>,
     pub year: Option<String>,
     pub r#type: Option<String>,
     #[allow(dead_code)]
@@ -57,6 +76,15 @@ pub struct DblpInfo {
 #[derive(Debug, Deserialize)]
 pub struct DblpAuthors {
     pub author: AuthorField,
+}
+
+/// `venue` は文字列または配列の場合がある
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum VenueField {
+    Single(String),
+    Multiple(Vec<String>),
 }
 
 /// `authors.author` は配列または単一オブジェクトの場合がある
@@ -175,7 +203,7 @@ pub async fn fetch_all_papers(
         let resp: DblpResponse = serde_json::from_str(&body)?;
 
         let total: u64 = resp.result.hits.total.parse().unwrap_or(0);
-        let hits = resp.result.hits.hit.unwrap_or_default();
+        let hits = resp.result.hits.hit.map(|h| h.into_vec()).unwrap_or_default();
         let page_len = hits.len() as u64;
 
         for hit in &hits {
@@ -216,7 +244,7 @@ pub async fn fetch_papers_for_year(
         let resp: DblpResponse = serde_json::from_str(&body)?;
 
         let total: u64 = resp.result.hits.total.parse().unwrap_or(0);
-        let hits = resp.result.hits.hit.unwrap_or_default();
+        let hits = resp.result.hits.hit.map(|h| h.into_vec()).unwrap_or_default();
         let page_len = hits.len() as u64;
 
         for hit in &hits {
@@ -292,7 +320,7 @@ mod tests {
         }"#;
 
         let resp: DblpResponse = serde_json::from_str(json).unwrap();
-        let hits = resp.result.hits.hit.as_ref().unwrap();
+        let hits = resp.result.hits.hit.unwrap().into_vec();
         assert_eq!(hits.len(), 2);
 
         let papers: Vec<Paper> = hits
@@ -349,7 +377,7 @@ mod tests {
         }"#;
 
         let resp: DblpResponse = serde_json::from_str(json).unwrap();
-        let hits = resp.result.hits.hit.as_ref().unwrap();
+        let hits = resp.result.hits.hit.unwrap().into_vec();
         let papers: Vec<Paper> = hits
             .iter()
             .filter_map(|h| hit_to_paper(h, "ccs"))
@@ -382,7 +410,7 @@ mod tests {
             resp.result.hits.total.parse::<u64>().unwrap(),
             4523
         );
-        assert!(resp.result.hits.hit.unwrap_or_default().is_empty());
+        assert!(resp.result.hits.hit.map(|h| h.into_vec()).unwrap_or_default().is_empty());
     }
 
     #[test]
@@ -421,7 +449,7 @@ mod tests {
         }"#;
 
         let resp: DblpResponse = serde_json::from_str(json).unwrap();
-        let hits = resp.result.hits.hit.as_ref().unwrap();
+        let hits = resp.result.hits.hit.unwrap().into_vec();
         let papers: Vec<Paper> = hits
             .iter()
             .filter_map(|h| hit_to_paper(h, "sp"))
@@ -455,6 +483,77 @@ mod tests {
             text: "Charlie".to_string(),
         });
         assert_eq!(extract_authors(&field), vec!["Charlie"]);
+    }
+
+    #[test]
+    fn test_venue_array() {
+        let json = r#"{
+            "result": {
+                "hits": {
+                    "@total": "1",
+                    "@computed": "1",
+                    "@sent": "1",
+                    "@first": "0",
+                    "hit": [
+                        {
+                            "info": {
+                                "title": "Proceedings of EUROCRYPT 84",
+                                "authors": {
+                                    "author": {"@pid": "1/1", "text": "Editor"}
+                                },
+                                "venue": ["EUROCRYPT", "Lecture Notes in Computer Science"],
+                                "year": "1985",
+                                "type": "Editorship",
+                                "url": "https://dblp.org/rec/conf/eurocrypt/84"
+                            }
+                        }
+                    ]
+                }
+            }
+        }"#;
+
+        // venue が配列でもデシリアライズに成功すること
+        let resp: DblpResponse = serde_json::from_str(json).unwrap();
+        let hits = resp.result.hits.hit.unwrap().into_vec();
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn test_single_hit_object() {
+        let json = r#"{
+            "result": {
+                "hits": {
+                    "@total": "1",
+                    "@computed": "1",
+                    "@sent": "1",
+                    "@first": "0",
+                    "hit": {
+                        "info": {
+                            "title": "Only Paper.",
+                            "authors": {
+                                "author": {"@pid": "1/1", "text": "Solo Author"}
+                            },
+                            "venue": "SP",
+                            "year": "2024",
+                            "type": "Conference and Workshop Papers",
+                            "ee": "https://doi.org/10.1109/test",
+                            "url": "https://dblp.org/rec/conf/sp/Test24"
+                        }
+                    }
+                }
+            }
+        }"#;
+
+        // hit が単一オブジェクトでもデシリアライズに成功すること
+        let resp: DblpResponse = serde_json::from_str(json).unwrap();
+        let hits = resp.result.hits.hit.unwrap().into_vec();
+        assert_eq!(hits.len(), 1);
+        let papers: Vec<Paper> = hits
+            .iter()
+            .filter_map(|h| hit_to_paper(h, "sp"))
+            .collect();
+        assert_eq!(papers.len(), 1);
+        assert_eq!(papers[0].title, "Only Paper");
     }
 
     #[test]

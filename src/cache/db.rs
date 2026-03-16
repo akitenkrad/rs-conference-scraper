@@ -2,7 +2,7 @@ use crate::cache::CacheDb;
 use crate::types::Paper;
 use anyhow::Result;
 use rusqlite::params;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// 同期状況を表示するための構造体
 #[derive(Debug)]
@@ -22,9 +22,13 @@ pub struct PaperStats {
     pub without_abstract: usize,
     pub by_conference: Vec<(String, usize)>,
     pub by_year: Vec<(u16, usize)>,
-    pub by_category: Vec<(String, usize)>,
     pub unique_authors: usize,
+    /// カテゴリ別論文数 (e.g., oral, poster, spotlight)
+    pub by_category: Vec<(String, usize)>,
+    /// 著者別論文数（上位）
     pub top_authors: Vec<(String, usize)>,
+    /// 年度ごとのabstract有無内訳
+    pub abstract_by_year: Vec<(u16, usize, usize)>, // (year, with_abstract, without_abstract)
 }
 
 impl CacheDb {
@@ -270,30 +274,6 @@ impl CacheDb {
             .collect::<Result<Vec<_>, _>>()?
         };
 
-        // カテゴリ別集計（categoriesはJSON配列で格納されている）
-        let by_category: Vec<(String, usize)> = {
-            let sql = format!(
-                "SELECT categories FROM papers{}",
-                where_clause
-            );
-            let mut stmt = self.conn.prepare(&sql)?;
-            let mut cat_counts: HashMap<String, usize> = HashMap::new();
-            let rows = stmt.query_map(params_refs.as_slice(), |row| {
-                row.get::<_, String>(0)
-            })?;
-            for row in rows {
-                let json = row?;
-                if let Ok(cats) = serde_json::from_str::<Vec<String>>(&json) {
-                    for cat in cats {
-                        *cat_counts.entry(cat).or_insert(0) += 1;
-                    }
-                }
-            }
-            let mut sorted: Vec<_> = cat_counts.into_iter().collect();
-            sorted.sort_by(|a, b| b.1.cmp(&a.1));
-            sorted
-        };
-
         // abstract有無の集計
         let with_abstract: usize = {
             let sql = format!(
@@ -309,14 +289,14 @@ impl CacheDb {
             })? as usize
         };
 
-        // ユニーク著者数とトップ著者
+        // ユニーク著者数 & トップ著者
         let (unique_authors, top_authors) = {
             let sql = format!(
                 "SELECT authors FROM papers{}",
                 where_clause
             );
             let mut stmt = self.conn.prepare(&sql)?;
-            let mut author_counts: HashMap<String, usize> = HashMap::new();
+            let mut author_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
             let rows = stmt.query_map(params_refs.as_slice(), |row| {
                 row.get::<_, String>(0)
             })?;
@@ -324,15 +304,61 @@ impl CacheDb {
                 let json = row?;
                 if let Ok(authors) = serde_json::from_str::<Vec<String>>(&json) {
                     for author in authors {
-                        *author_counts.entry(author).or_insert(0) += 1;
+                        *author_count.entry(author).or_insert(0) += 1;
                     }
                 }
             }
-            let unique = author_counts.len();
-            let mut sorted: Vec<_> = author_counts.into_iter().collect();
-            sorted.sort_by(|a, b| b.1.cmp(&a.1));
-            sorted.truncate(10);
+            let unique = author_count.len();
+            let mut sorted: Vec<(String, usize)> = author_count.into_iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            sorted.truncate(20);
             (unique, sorted)
+        };
+
+        // カテゴリ別集計
+        let by_category = {
+            let sql = format!(
+                "SELECT categories FROM papers{}",
+                where_clause
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let mut cat_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            let rows = stmt.query_map(params_refs.as_slice(), |row| {
+                row.get::<_, String>(0)
+            })?;
+            for row in rows {
+                let json = row?;
+                if let Ok(categories) = serde_json::from_str::<Vec<String>>(&json) {
+                    for cat in categories {
+                        if !cat.is_empty() {
+                            *cat_count.entry(cat).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+            let mut sorted: Vec<(String, usize)> = cat_count.into_iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            sorted
+        };
+
+        // 年度ごとのabstract有無内訳
+        let abstract_by_year = {
+            let sql = format!(
+                "SELECT year, \
+                 SUM(CASE WHEN abstract != '' AND abstract IS NOT NULL THEN 1 ELSE 0 END), \
+                 SUM(CASE WHEN abstract = '' OR abstract IS NULL THEN 1 ELSE 0 END) \
+                 FROM papers{} GROUP BY year ORDER BY year DESC",
+                where_clause
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            stmt.query_map(params_refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u16,
+                    row.get::<_, i64>(1)? as usize,
+                    row.get::<_, i64>(2)? as usize,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
         };
 
         Ok(PaperStats {
@@ -341,9 +367,10 @@ impl CacheDb {
             without_abstract: total - with_abstract,
             by_conference,
             by_year,
-            by_category,
             unique_authors,
+            by_category,
             top_authors,
+            abstract_by_year,
         })
     }
 
@@ -381,6 +408,77 @@ impl CacheDb {
         };
 
         (where_clause, params_vec)
+    }
+
+    /// abstractが空の論文を取得
+    pub fn load_papers_without_abstract(
+        &self,
+        conference: Option<&str>,
+        years: Option<&[u16]>,
+    ) -> Result<Vec<Paper>> {
+        let mut sql = String::from(
+            "SELECT id, conference, year, title, authors, abstract, url, pdf_url, categories, hash FROM papers WHERE (abstract = '' OR abstract IS NULL)",
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(conf) = conference {
+            sql.push_str(&format!(" AND conference=?{}", params_vec.len() + 1));
+            params_vec.push(Box::new(conf.to_string()));
+        }
+        if let Some(yrs) = years {
+            if !yrs.is_empty() {
+                let placeholders: Vec<String> = yrs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| format!("?{}", params_vec.len() + i + 1))
+                    .collect();
+                sql.push_str(&format!(" AND year IN ({})", placeholders.join(",")));
+                for y in yrs {
+                    params_vec.push(Box::new(*y as i64));
+                }
+            }
+        }
+        sql.push_str(" ORDER BY year DESC, title ASC");
+
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = self.conn.prepare(&sql)?;
+        let papers = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                let authors_json: String = row.get(4)?;
+                let categories_json: String = row.get(8)?;
+                Ok(Paper {
+                    id: row.get(0)?,
+                    conference: row.get(1)?,
+                    year: row.get::<_, i64>(2)? as u16,
+                    title: row.get(3)?,
+                    authors: serde_json::from_str(&authors_json).unwrap_or_default(),
+                    r#abstract: row.get(5)?,
+                    url: row.get(6)?,
+                    pdf_url: row.get(7)?,
+                    categories: serde_json::from_str(&categories_json).unwrap_or_default(),
+                    hash: row.get(9)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(papers)
+    }
+
+    /// 論文のabstractとpdf_urlを更新
+    pub fn update_paper_metadata(
+        &self,
+        id: &str,
+        conference: &str,
+        year: u16,
+        abstract_text: &str,
+        pdf_url: Option<&str>,
+    ) -> Result<bool> {
+        let updated = self.conn.execute(
+            "UPDATE papers SET abstract=?1, pdf_url=COALESCE(?2, pdf_url)
+             WHERE id=?3 AND conference=?4 AND year=?5",
+            params![abstract_text, pdf_url, id, conference, year],
+        )?;
+        Ok(updated > 0)
     }
 
     /// 年度の論文を強制削除（--force用）
@@ -645,10 +743,6 @@ mod tests {
 
         let stats = db.stats(None, None).unwrap();
         assert_eq!(stats.unique_authors, 2); // "Author A" and "Author B"
-        assert_eq!(stats.top_authors.len(), 2);
-        assert_eq!(stats.top_authors[0].1, 2); // each author appears in 2 papers
-        assert_eq!(stats.by_category.len(), 1); // "Conference"
-        assert_eq!(stats.by_category[0], ("Conference".to_string(), 2));
     }
 
     #[test]

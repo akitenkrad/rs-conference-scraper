@@ -1,6 +1,7 @@
 mod cache;
 mod cli;
 mod conference;
+mod enrich;
 mod filter;
 mod output;
 mod scraper;
@@ -61,23 +62,10 @@ async fn main() -> Result<()> {
 
             tracing::info!("{} papers after keyword/category filters", scored.len());
 
-            // Apply LLM filter if requested
-            if args.filter.iter().any(|f| f == "llm") {
-                let theme = args
-                    .theme
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("--theme is required when using llm filter"))?;
-                let api_key = args.api_key.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!("--api-key or ANTHROPIC_API_KEY is required for llm filter")
-                })?;
-
-                let llm = filter::llm::LlmFilter::new(
-                    api_key.clone(),
-                    theme.clone(),
-                    args.threshold,
-                    4,
-                );
-                scored = llm.score_papers(scored).await?;
+            // Apply limit (0 = unlimited)
+            if args.limit > 0 {
+                scored.truncate(args.limit);
+                tracing::info!("Limited output to {} papers", scored.len());
             }
 
             // Build output
@@ -90,7 +78,6 @@ async fn main() -> Result<()> {
                 query: output::QueryInfo {
                     conferences,
                     years: years.unwrap_or_default(),
-                    theme: args.theme.clone(),
                     filters: args.filter.clone(),
                     combine: args.combine.clone(),
                 },
@@ -99,13 +86,16 @@ async fn main() -> Result<()> {
             };
 
             // Write output
-            let json = serde_json::to_string_pretty(&output)?;
+            let formatted = output.format(&args.format)?;
             if let Some(ref path) = args.output {
-                std::fs::write(path, &json)?;
+                std::fs::write(path, &formatted)?;
                 tracing::info!("Output written to {}", path.display());
             } else {
-                println!("{}", json);
+                println!("{}", formatted);
             }
+        }
+        Commands::Enrich(args) => {
+            enrich::run_enrich(&args, &cache_dir).await?;
         }
         Commands::Stats(args) => {
             let db = cache::CacheDb::open(&cache_dir)?;
@@ -121,43 +111,120 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
 
-            // サマリー
-            println!("=== Paper Statistics ===\n");
-            println!("Total papers:       {}", stats.total);
-            println!("With abstract:      {}", stats.with_abstract);
-            println!("Without abstract:   {}", stats.without_abstract);
-            println!("Unique authors:     {}", stats.unique_authors);
+            // --show が未指定なら全セクション表示
+            let show_all = args.show.is_empty();
+            let show_summary = show_all || args.show.iter().any(|s| s == "summary");
+            let show_conferences = show_all || args.show.iter().any(|s| s == "conferences");
+            let show_years = show_all || args.show.iter().any(|s| s == "years");
+            let show_categories = show_all || args.show.iter().any(|s| s == "categories");
+            let show_authors = show_all || args.show.iter().any(|s| s == "authors");
+            let show_abstracts = show_all || args.show.iter().any(|s| s == "abstracts");
 
-            // 会議別
-            if stats.by_conference.len() > 1 || args.conference.is_none() {
+            // ヘッダー
+            if let Some(ref conf) = args.conference {
+                println!("=== {} Paper Statistics ===\n", conf.to_uppercase());
+            } else {
+                println!("=== Paper Statistics ===\n");
+            }
+
+            // サマリー
+            if show_summary {
+                print_ascii_table(
+                    &["Metric", "Value"],
+                    &[
+                        vec!["Total papers".to_string(), stats.total.to_string()],
+                        vec!["With abstract".to_string(), stats.with_abstract.to_string()],
+                        vec![
+                            "Without abstract".to_string(),
+                            stats.without_abstract.to_string(),
+                        ],
+                        vec![
+                            "Unique authors".to_string(),
+                            stats.unique_authors.to_string(),
+                        ],
+                    ],
+                );
+            }
+
+            // 国際会議ごとの論文数
+            if show_conferences && args.conference.is_none() {
+                let rows: Vec<Vec<String>> = stats
+                    .by_conference
+                    .iter()
+                    .map(|(conf, count)| vec![conf.to_string(), count.to_string()])
+                    .collect();
+
                 println!("\n--- By Conference ---");
-                for (conf, count) in &stats.by_conference {
-                    println!("  {:<16} {:>6} papers", conf, count);
-                }
+                print_ascii_table(&["Conference", "Papers"], &rows);
             }
 
             // 年度別
-            println!("\n--- By Year ---");
-            for (year, count) in &stats.by_year {
-                let bar = "#".repeat((*count as f64 / stats.total as f64 * 40.0) as usize);
-                println!("  {} {:>6}  {}", year, count, bar);
+            if show_years {
+                println!("\n--- By Year ---");
+                let year_rows: Vec<Vec<String>> = stats
+                    .by_year
+                    .iter()
+                    .map(|(year, count)| {
+                        let bar =
+                            "#".repeat((*count as f64 / stats.total as f64 * 40.0) as usize);
+                        vec![year.to_string(), count.to_string(), bar]
+                    })
+                    .collect();
+                print_ascii_table(&["Year", "Papers", "Distribution"], &year_rows);
             }
 
             // カテゴリ別
-            if !stats.by_category.is_empty() {
+            if show_categories && !stats.by_category.is_empty() {
                 println!("\n--- By Category ---");
-                for (cat, count) in &stats.by_category {
-                    println!("  {:<30} {:>6}", cat, count);
-                }
+                let cat_rows: Vec<Vec<String>> = stats
+                    .by_category
+                    .iter()
+                    .map(|(cat, count)| {
+                        let pct = format!("{:.1}%", *count as f64 / stats.total as f64 * 100.0);
+                        vec![cat.to_string(), count.to_string(), pct]
+                    })
+                    .collect();
+                print_ascii_table(&["Category", "Papers", "Ratio"], &cat_rows);
             }
 
             // トップ著者
-            if !stats.top_authors.is_empty() {
-                println!("\n--- Top 10 Authors ---");
-                for (i, (author, count)) in stats.top_authors.iter().enumerate() {
-                    println!("  {:>2}. {:<30} {:>4} papers", i + 1, author, count);
-                }
+            if show_authors && !stats.top_authors.is_empty() {
+                println!("\n--- Top Authors ---");
+                let author_rows: Vec<Vec<String>> = stats
+                    .top_authors
+                    .iter()
+                    .map(|(author, count)| vec![author.to_string(), count.to_string()])
+                    .collect();
+                print_ascii_table(&["Author", "Papers"], &author_rows);
             }
+
+            // 年度別abstract内訳
+            if show_abstracts && !stats.abstract_by_year.is_empty() {
+                println!("\n--- Abstract Coverage by Year ---");
+                let abs_rows: Vec<Vec<String>> = stats
+                    .abstract_by_year
+                    .iter()
+                    .map(|(year, with_abs, without_abs)| {
+                        let total_year = with_abs + without_abs;
+                        let pct = if total_year > 0 {
+                            format!("{:.1}%", *with_abs as f64 / total_year as f64 * 100.0)
+                        } else {
+                            "N/A".to_string()
+                        };
+                        vec![
+                            year.to_string(),
+                            with_abs.to_string(),
+                            without_abs.to_string(),
+                            pct,
+                        ]
+                    })
+                    .collect();
+                print_ascii_table(
+                    &["Year", "With Abstract", "Without Abstract", "Coverage"],
+                    &abs_rows,
+                );
+            }
+
         }
         Commands::Cache { command } => {
             let mut db = cache::CacheDb::open(&cache_dir)?;
@@ -195,15 +262,70 @@ async fn main() -> Result<()> {
         }
         Commands::ListConferences => {
             let conferences = conference::list_conferences();
-            println!("{:<12} {}", "ID", "Name");
-            println!("{}", "-".repeat(24));
-            for (id, name) in &conferences {
-                println!("{:<12} {}", id, name);
-            }
+            let rows: Vec<Vec<String>> = conferences
+                .iter()
+                .map(|(id, name, field)| {
+                    vec![id.to_string(), name.to_string(), field.to_string()]
+                })
+                .collect();
+            print_ascii_table(&["ID", "Name", "Field"], &rows);
         }
     }
 
     Ok(())
+}
+
+/// ASCIIテーブルを出力する
+fn print_ascii_table(headers: &[&str], rows: &[Vec<String>]) {
+    // 各カラムの最大幅を計算
+    let col_count = headers.len();
+    let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            if i < col_count && cell.len() > widths[i] {
+                widths[i] = cell.len();
+            }
+        }
+    }
+
+    // 罫線
+    let separator: String = widths
+        .iter()
+        .map(|w| "-".repeat(w + 2))
+        .collect::<Vec<_>>()
+        .join("+");
+    let separator = format!("+{}+", separator);
+
+    // ヘッダー
+    println!("{}", separator);
+    let header_line: String = widths
+        .iter()
+        .enumerate()
+        .map(|(i, w)| format!(" {:<width$} ", headers[i], width = w))
+        .collect::<Vec<_>>()
+        .join("|");
+    println!("|{}|", header_line);
+    println!("{}", separator);
+
+    // データ行
+    for row in rows {
+        let line: String = widths
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                let cell = row.get(i).map(|s| s.as_str()).unwrap_or("");
+                // 数値は右寄せ，それ以外は左寄せ
+                if cell.parse::<f64>().is_ok() {
+                    format!(" {:>width$} ", cell, width = w)
+                } else {
+                    format!(" {:<width$} ", cell, width = w)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        println!("|{}|", line);
+    }
+    println!("{}", separator);
 }
 
 fn resolve_cache_dir(path: &str) -> Result<std::path::PathBuf> {

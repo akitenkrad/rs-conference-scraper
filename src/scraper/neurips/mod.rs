@@ -40,6 +40,10 @@ impl ConferenceScraper for NeurIpsScraper {
         "NeurIPS"
     }
 
+    fn backend_id(&self) -> &str {
+        "openreview"
+    }
+
     async fn fetch_years(&self, client: &reqwest::Client) -> Result<Vec<u16>> {
         years::fetch_years(client, &self.base_url, self.interval).await
     }

@@ -43,6 +43,7 @@ impl CryptoDbScraper {
         match self.venue_id.as_str() {
             "crypto" => (1981, 2025),
             "eurocrypt" => (1985, 2025),
+            "asiacrypt" => (1991, 2025),
             _ => (2000, 2025),
         }
     }
@@ -56,6 +57,10 @@ impl ConferenceScraper for CryptoDbScraper {
 
     fn name(&self) -> &str {
         &self.venue_name
+    }
+
+    fn backend_id(&self) -> &str {
+        "cryptodb"
     }
 
     async fn fetch_years(&self, _client: &reqwest::Client) -> Result<Vec<u16>> {

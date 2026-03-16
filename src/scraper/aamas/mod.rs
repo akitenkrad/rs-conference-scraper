@@ -44,6 +44,10 @@ impl ConferenceScraper for AamasScraper {
         "AAMAS"
     }
 
+    fn backend_id(&self) -> &str {
+        "aamas"
+    }
+
     async fn fetch_years(&self, _client: &reqwest::Client) -> Result<Vec<u16>> {
         Ok(years::available_years())
     }

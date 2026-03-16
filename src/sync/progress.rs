@@ -1,30 +1,53 @@
+use std::sync::Arc;
+
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 /// sync全体の進捗管理
 pub struct SyncProgress {
-    multi: MultiProgress,
+    multi: Arc<MultiProgress>,
     year_bar: Option<ProgressBar>,
+    prefix: String,
 }
 
 impl SyncProgress {
+    /// 単一会議用（後方互換）
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
-            multi: MultiProgress::new(),
+            multi: Arc::new(MultiProgress::new()),
             year_bar: None,
+            prefix: String::new(),
+        }
+    }
+
+    /// 共有MultiProgress上に会議ごとの進捗を作成
+    pub fn with_shared(multi: Arc<MultiProgress>, prefix: &str) -> Self {
+        Self {
+            multi,
+            year_bar: None,
+            prefix: prefix.to_string(),
         }
     }
 
     /// 年度レベルの進捗バーを開始
     pub fn start_years(&mut self, total: u64) -> ProgressBar {
         let pb = self.multi.add(ProgressBar::new(total));
+        let template = if self.prefix.is_empty() {
+            "{prefix:.bold} [{bar:30.cyan/blue}] {pos}/{len} years ({eta})".to_string()
+        } else {
+            "{prefix:.bold} [{bar:30.cyan/blue}] {pos}/{len} years ({eta})".to_string()
+        };
         pb.set_style(
-            ProgressStyle::with_template(
-                "{prefix:.bold} [{bar:30.cyan/blue}] {pos}/{len} years ({eta})",
-            )
-            .unwrap()
-            .progress_chars("█▓░"),
+            ProgressStyle::with_template(&template)
+                .unwrap()
+                .progress_chars("###"),
         );
-        pb.set_prefix("Syncing");
+        let label = if self.prefix.is_empty() {
+            "Syncing".to_string()
+        } else {
+            format!("[{}] Syncing", self.prefix)
+        };
+        pb.set_prefix(label);
         self.year_bar = Some(pb.clone());
         pb
     }
@@ -37,9 +60,14 @@ impl SyncProgress {
                 "  {prefix:.dim} [{bar:30.green/white}] {pos}/{len} papers ({per_sec}, {eta}) {msg}",
             )
             .unwrap()
-            .progress_chars("█▓░"),
+            .progress_chars("###"),
         );
-        pb.set_prefix(format!("{}", year));
+        let label = if self.prefix.is_empty() {
+            format!("{}", year)
+        } else {
+            format!("[{}] {}", self.prefix, year)
+        };
+        pb.set_prefix(label);
         if skipped > 0 {
             pb.set_message(format!("({} skipped)", skipped));
         }
@@ -49,7 +77,12 @@ impl SyncProgress {
     /// 年度をスキップしたことを表示
     pub fn skip_year(&self, year: u16, reason: &str) {
         if let Some(ref bar) = self.year_bar {
-            bar.println(format!("  {} skipped ({})", year, reason));
+            let msg = if self.prefix.is_empty() {
+                format!("  {} skipped ({})", year, reason)
+            } else {
+                format!("  [{}] {} skipped ({})", self.prefix, year, reason)
+            };
+            bar.println(msg);
             bar.inc(1);
         }
     }
@@ -61,10 +94,23 @@ impl SyncProgress {
         }
     }
 
+    /// プログレスバーと競合しないようにログ出力
+    pub fn log(&self, msg: &str) {
+        if let Some(ref bar) = self.year_bar {
+            if self.prefix.is_empty() {
+                bar.println(msg);
+            } else {
+                bar.println(format!("[{}] {}", self.prefix, msg));
+            }
+        } else {
+            eprintln!("{}", msg);
+        }
+    }
+
     /// 全体完了
     pub fn finish(&self) {
         if let Some(ref bar) = self.year_bar {
-            bar.finish_with_message("done");
+            bar.finish_and_clear();
         }
     }
 }

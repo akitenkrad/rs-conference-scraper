@@ -1,3 +1,4 @@
+use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -14,8 +15,6 @@ pub struct FilterOutput {
 pub struct QueryInfo {
     pub conferences: Vec<String>,
     pub years: Vec<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub theme: Option<String>,
     pub filters: Vec<String>,
     pub combine: String,
 }
@@ -67,6 +66,136 @@ impl ScoredPaper {
     }
 }
 
+impl FilterOutput {
+    /// 指定フォーマットで文字列に変換
+    pub fn format(&self, fmt: &str) -> Result<String> {
+        match fmt {
+            "json" => Ok(serde_json::to_string_pretty(self)?),
+            "csv" => self.to_csv(),
+            "xml" => Ok(self.to_xml()),
+            _ => bail!("Unsupported format: '{}'. Use json, csv, or xml.", fmt),
+        }
+    }
+
+    fn to_csv(&self) -> Result<String> {
+        let mut wtr = csv::Writer::from_writer(Vec::new());
+        wtr.write_record([
+            "id",
+            "title",
+            "authors",
+            "abstract",
+            "conference",
+            "year",
+            "url",
+            "pdf_url",
+            "categories",
+        ])?;
+        for p in &self.papers {
+            wtr.write_record([
+                &p.id,
+                &p.title,
+                &p.authors.join("; "),
+                &p.r#abstract,
+                &p.conference,
+                &p.year.to_string(),
+                &p.url,
+                &p.pdf_url.as_deref().unwrap_or("").to_string(),
+                &p.categories.join("; "),
+            ])?;
+        }
+        wtr.flush()?;
+        Ok(String::from_utf8(wtr.into_inner()?)?)
+    }
+
+    fn to_xml(&self) -> String {
+        let mut xml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
+        xml.push('\n');
+        xml.push_str("<filter_output>\n");
+
+        // query
+        xml.push_str("  <query>\n");
+        for c in &self.query.conferences {
+            xml.push_str(&format!("    <conference>{}</conference>\n", xml_escape(c)));
+        }
+        for y in &self.query.years {
+            xml.push_str(&format!("    <year>{y}</year>\n"));
+        }
+        for f in &self.query.filters {
+            xml.push_str(&format!("    <filter>{}</filter>\n", xml_escape(f)));
+        }
+        xml.push_str(&format!(
+            "    <combine>{}</combine>\n",
+            xml_escape(&self.query.combine)
+        ));
+        xml.push_str("  </query>\n");
+
+        xml.push_str(&format!("  <total>{}</total>\n", self.total));
+
+        // papers
+        xml.push_str("  <papers>\n");
+        for p in &self.papers {
+            xml.push_str("    <paper>\n");
+            xml.push_str(&format!(
+                "      <id>{}</id>\n",
+                xml_escape(&p.id)
+            ));
+            xml.push_str(&format!(
+                "      <title>{}</title>\n",
+                xml_escape(&p.title)
+            ));
+            xml.push_str("      <authors>\n");
+            for a in &p.authors {
+                xml.push_str(&format!(
+                    "        <author>{}</author>\n",
+                    xml_escape(a)
+                ));
+            }
+            xml.push_str("      </authors>\n");
+            xml.push_str(&format!(
+                "      <abstract>{}</abstract>\n",
+                xml_escape(&p.r#abstract)
+            ));
+            xml.push_str(&format!(
+                "      <conference>{}</conference>\n",
+                xml_escape(&p.conference)
+            ));
+            xml.push_str(&format!("      <year>{}</year>\n", p.year));
+            xml.push_str(&format!(
+                "      <url>{}</url>\n",
+                xml_escape(&p.url)
+            ));
+            if let Some(ref pdf) = p.pdf_url {
+                xml.push_str(&format!(
+                    "      <pdf_url>{}</pdf_url>\n",
+                    xml_escape(pdf)
+                ));
+            }
+            if !p.categories.is_empty() {
+                xml.push_str("      <categories>\n");
+                for c in &p.categories {
+                    xml.push_str(&format!(
+                        "        <category>{}</category>\n",
+                        xml_escape(c)
+                    ));
+                }
+                xml.push_str("      </categories>\n");
+            }
+            xml.push_str("    </paper>\n");
+        }
+        xml.push_str("  </papers>\n");
+        xml.push_str("</filter_output>\n");
+        xml
+    }
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,7 +240,6 @@ mod tests {
             query: QueryInfo {
                 conferences: vec!["neurips".to_string()],
                 years: vec![2024],
-                theme: Some("deep learning".to_string()),
                 filters: vec!["keyword".to_string()],
                 combine: "and".to_string(),
             },
@@ -123,23 +251,9 @@ mod tests {
         assert_eq!(json["total"], 1);
         assert_eq!(json["query"]["conferences"][0], "neurips");
         assert_eq!(json["query"]["years"][0], 2024);
-        assert_eq!(json["query"]["theme"], "deep learning");
         assert_eq!(json["query"]["filters"][0], "keyword");
         assert_eq!(json["query"]["combine"], "and");
         assert_eq!(json["papers"][0]["title"], "Test Paper Title");
     }
 
-    #[test]
-    fn query_info_with_none_theme_skips_field() {
-        let query = QueryInfo {
-            conferences: vec!["neurips".to_string()],
-            years: vec![2024],
-            theme: None,
-            filters: vec![],
-            combine: "and".to_string(),
-        };
-
-        let json = serde_json::to_value(&query).unwrap();
-        assert!(json.get("theme").is_none());
-    }
 }
