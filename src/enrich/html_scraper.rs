@@ -1,7 +1,5 @@
 use super::site_parsers;
 use anyhow::Result;
-use openai_tools::common::models::ChatModel;
-use openai_tools::responses::request::Responses;
 use reqwest::Client;
 use scraper::{Html, Selector};
 
@@ -9,10 +7,6 @@ use scraper::{Html, Selector};
 pub enum HtmlResult {
     /// HTML直接抽出で取得できた
     Direct(String),
-    /// LLM経由で取得できた
-    Llm(String),
-    /// 直接抽出は失敗したが，LLMに渡せる本文テキストがある
-    NeedLlm(String),
     /// 取得できなかった
     Empty,
 }
@@ -73,27 +67,7 @@ pub async fn fetch_abstract_via_html(
         }
     }
 
-    // Step 2: メインテキストを保持して返す（LLMティアで使用）
-    let main_text = extract_main_text(&document);
-    if main_text.is_empty() {
-        return Ok(HtmlResult::Empty);
-    }
-
-    // テキストを3000文字に制限
-    let truncated: String = main_text.chars().take(3000).collect();
-    Ok(HtmlResult::NeedLlm(truncated))
-}
-
-/// 保持済みの本文テキストからLLMでabstractを抽出する
-pub async fn extract_abstract_with_llm(title: &str, main_text: &str) -> Result<HtmlResult> {
-    match fetch_abstract_via_llm(title, main_text).await {
-        Ok(text) if !text.is_empty() => Ok(HtmlResult::Llm(text)),
-        Ok(_) => Ok(HtmlResult::Empty),
-        Err(e) => {
-            tracing::debug!("LLM extraction failed for '{}': {}", title, e);
-            Ok(HtmlResult::Empty)
-        }
-    }
+    Ok(HtmlResult::Empty)
 }
 
 /// HTMLから直接abstractを抽出する
@@ -185,72 +159,3 @@ fn extract_abstract_after_heading(document: &Html) -> Option<String> {
     None
 }
 
-/// ページのメインテキストを抽出する
-fn extract_main_text(document: &Html) -> String {
-    let body_sel = Selector::parse("body").unwrap();
-
-    let mut texts = Vec::new();
-
-    if let Some(body) = document.select(&body_sel).next() {
-        for el in body.descendants() {
-            // script/style要素の中身はスキップ
-            if let Some(parent) = el.parent()
-                && let Some(parent_el) = parent.value().as_element()
-                    && (parent_el.name() == "script" || parent_el.name() == "style") {
-                        continue;
-                    }
-            if let Some(text) = el.value().as_text() {
-                let t = text.trim();
-                if !t.is_empty() {
-                    texts.push(t.to_string());
-                }
-            }
-        }
-    }
-
-    texts.join(" ")
-}
-
-/// LLMを使ってテキストからabstractを抽出する（web_searchなし）
-async fn fetch_abstract_via_llm(title: &str, text: &str) -> Result<String> {
-    // OPENAI_API_KEY が未設定の場合は空文字を返す
-    if std::env::var("OPENAI_API_KEY").is_err() {
-        tracing::debug!(
-            "OPENAI_API_KEY not set, skipping LLM extraction for '{}'",
-            title
-        );
-        return Ok(String::new());
-    }
-
-    let prompt = format!(
-        "以下のWebページから学術論文のabstractを抽出してください．\
-         abstractのテキストのみを返してください．\
-         見つからない場合は空文字を返してください．\n\n{}",
-        text
-    );
-
-    let mut client = Responses::new();
-    let result = client
-        .model(ChatModel::Gpt5Mini)
-        .instructions(
-            "あなたは学術論文のabstractを抽出するアシスタントです．\
-             与えられたテキストからabstractを見つけて，そのテキストのみを返してください．",
-        )
-        .str_message(&prompt)
-        .complete()
-        .await;
-
-    match result {
-        Ok(response) => {
-            if let Some(text) = response.output_text() {
-                let text = text.trim().to_string();
-                return Ok(text);
-            }
-            Ok(String::new())
-        }
-        Err(e) => {
-            tracing::debug!("LLM extraction failed for '{}': {}", title, e);
-            Ok(String::new())
-        }
-    }
-}

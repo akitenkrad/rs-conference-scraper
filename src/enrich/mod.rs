@@ -26,8 +26,6 @@ struct SkipCounts {
     all_empty: usize,
     /// 全ティアがAPIエラーだった
     all_error: usize,
-    /// LLMキー未設定で最終手段が使えなかった
-    no_llm_key: usize,
     /// エラーと空の混合
     mixed: usize,
 }
@@ -37,27 +35,24 @@ impl SkipCounts {
         Self {
             all_empty: 0,
             all_error: 0,
-            no_llm_key: 0,
             mixed: 0,
         }
     }
 
     fn total(&self) -> usize {
-        self.all_empty + self.all_error + self.no_llm_key + self.mixed
+        self.all_empty + self.all_error + self.mixed
     }
 
     /// スキップ原因を分類して加算する
-    fn record(&mut self, empty_count: usize, error_count: usize, has_llm_key: bool) {
+    fn record(&mut self, empty_count: usize, error_count: usize) {
         let total = empty_count + error_count;
         if total == 0 {
             return;
         }
         if error_count == total {
             self.all_error += 1;
-        } else if empty_count == total && has_llm_key {
+        } else if empty_count == total {
             self.all_empty += 1;
-        } else if !has_llm_key && error_count < total {
-            self.no_llm_key += 1;
         } else {
             self.mixed += 1;
         }
@@ -72,7 +67,6 @@ struct TierCounts {
     cr: usize,
     pdf: usize,
     html: usize,
-    llm: usize,
     skip: SkipCounts,
 }
 
@@ -84,7 +78,6 @@ enum ActiveTier {
     CrossRef,
     Html,
     Pdf,
-    Llm,
     Done,
 }
 
@@ -97,13 +90,12 @@ impl TierCounts {
             cr: 0,
             pdf: 0,
             html: 0,
-            llm: 0,
             skip: SkipCounts::new(),
         }
     }
 
     fn total_enriched(&self) -> usize {
-        self.s2 + self.oa + self.arxiv + self.cr + self.pdf + self.html + self.llm
+        self.s2 + self.oa + self.arxiv + self.cr + self.pdf + self.html
     }
 
     /// ティアラベルに色をつける: ヒットありなら緑，なしならdim
@@ -118,18 +110,16 @@ impl TierCounts {
     /// プログレスバー用のメッセージを生成する
     fn build_msg(&self, active: &ActiveTier) -> String {
         let counts = format!(
-            "{} {} {} {} {} {} {} {RED}skip{RESET}:{}(E:{}/R:{}/K:{}/M:{})",
+            "{} {} {} {} {} {} {RED}skip{RESET}:{}(E:{}/R:{}/M:{})",
             self.colored_count("S2", self.s2),
             self.colored_count("OA", self.oa),
             self.colored_count("arXiv", self.arxiv),
             self.colored_count("CR", self.cr),
             self.colored_count("HTML", self.html),
             self.colored_count("PDF", self.pdf),
-            self.colored_count("LLM", self.llm),
             self.skip.total(),
             self.skip.all_empty,
             self.skip.all_error,
-            self.skip.no_llm_key,
             self.skip.mixed,
         );
 
@@ -140,7 +130,6 @@ impl TierCounts {
             ActiveTier::CrossRef => format!("{YELLOW}▶ CrossRef{RESET}"),
             ActiveTier::Html => format!("{YELLOW}▶ HTML{RESET}"),
             ActiveTier::Pdf => format!("{YELLOW}▶ PDF{RESET}"),
-            ActiveTier::Llm => format!("{YELLOW}▶ LLM{RESET}"),
             ActiveTier::Done => format!("{GREEN}✓{RESET}"),
         };
 
@@ -148,16 +137,9 @@ impl TierCounts {
     }
 }
 
-/// Semantic ScholarおよびOpenAlex/arXiv/CrossRef/HTMLスクレイピング/LLMのフォールバックチェインで
+/// Semantic ScholarおよびOpenAlex/arXiv/CrossRef/HTMLスクレイピング/PDFのフォールバックチェインで
 /// キャッシュ済み論文のメタデータを補完する
 pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
-    // OPENAI_API_KEY の存在確認（警告のみ，最終手段のため必須ではない）
-    if std::env::var("OPENAI_API_KEY").is_err() {
-        tracing::warn!(
-            "OPENAI_API_KEY is not set. LLM-based abstract extraction will be skipped."
-        );
-    }
-
     let db = CacheDb::open(cache_dir)?;
 
     // Parse years
@@ -196,11 +178,11 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
     }
 
     tracing::info!(
-        "Found {} papers to enrich via 7-tier fallback chain",
+        "Found {} papers to enrich via 6-tier fallback chain",
         papers.len()
     );
     tracing::info!(
-        "Skip reason legend: E=all_empty, R=all_error, K=no_llm_key, M=mixed"
+        "Skip reason legend: E=all_empty, R=all_error, M=mixed"
     );
 
     // SemanticScholar クライアント初期化
@@ -334,7 +316,6 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
         }
 
         // Tier 5: HTMLスクレイピング（直接抽出のみ）
-        let mut llm_text: Option<String> = None;
         if abstract_text.is_empty() {
             pb.set_message(counts.build_msg(&ActiveTier::Html));
             match html_scraper::fetch_abstract_via_html(&http_client, &paper.title, &paper.url)
@@ -345,19 +326,9 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
                     source = "html";
                     tracing::debug!("Tier5(HTML) hit for '{}'", paper.title);
                 }
-                Ok(html_scraper::HtmlResult::NeedLlm(main_text)) => {
-                    // LLMティアで使うために本文テキストを保持
-                    llm_text = Some(main_text);
-                    tier_empty_count += 1;
-                    tracing::debug!("HTML direct extraction empty for '{}', saved for LLM", paper.title);
-                }
                 Ok(html_scraper::HtmlResult::Empty) => {
                     tier_empty_count += 1;
                     tracing::debug!("HTML scraping returned empty for '{}'", paper.title);
-                }
-                Ok(html_scraper::HtmlResult::Llm(_)) => {
-                    // fetch_abstract_via_html no longer returns Llm directly
-                    unreachable!();
                 }
                 Err(e) => {
                     tier_error_count += 1;
@@ -392,27 +363,6 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
             }
         }
 
-        // Tier 7: LLM抽出（Tier 5で保持した本文テキストを使用）
-        if abstract_text.is_empty()
-            && let Some(ref main_text) = llm_text {
-                pb.set_message(counts.build_msg(&ActiveTier::Llm));
-                match html_scraper::extract_abstract_with_llm(&paper.title, main_text).await {
-                    Ok(html_scraper::HtmlResult::Llm(text)) => {
-                        abstract_text = text;
-                        source = "llm";
-                        tracing::debug!("Tier7(LLM) hit for '{}'", paper.title);
-                    }
-                    Ok(_) => {
-                        tier_empty_count += 1;
-                        tracing::debug!("LLM extraction returned empty for '{}'", paper.title);
-                    }
-                    Err(e) => {
-                        tier_error_count += 1;
-                        tracing::debug!("LLM extraction failed for '{}': {}", paper.title, e);
-                    }
-                }
-            }
-
         // 結果の反映
         if !abstract_text.is_empty() {
             db.update_paper_metadata(
@@ -429,12 +379,10 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
                 "cr" => counts.cr += 1,
                 "pdf" => counts.pdf += 1,
                 "html" => counts.html += 1,
-                "llm" => counts.llm += 1,
                 _ => {}
             }
         } else {
-            let has_llm_key = std::env::var("OPENAI_API_KEY").is_ok();
-            counts.skip.record(tier_empty_count, tier_error_count, has_llm_key);
+            counts.skip.record(tier_empty_count, tier_error_count);
         }
 
         pb.set_message(counts.build_msg(&ActiveTier::Done));
@@ -448,7 +396,7 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
 
     let skip = &counts.skip;
     println!(
-        "Enrichment complete: {} enriched (S2: {}, OA: {}, arXiv: {}, CR: {}, HTML: {}, PDF: {}, LLM: {}), {} skipped (all_empty: {}, all_error: {}, no_llm_key: {}, mixed: {})",
+        "Enrichment complete: {} enriched (S2: {}, OA: {}, arXiv: {}, CR: {}, HTML: {}, PDF: {}), {} skipped (all_empty: {}, all_error: {}, mixed: {})",
         counts.total_enriched(),
         counts.s2,
         counts.oa,
@@ -456,11 +404,9 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
         counts.cr,
         counts.html,
         counts.pdf,
-        counts.llm,
         skip.total(),
         skip.all_empty,
         skip.all_error,
-        skip.no_llm_key,
         skip.mixed,
     );
 
