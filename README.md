@@ -1,6 +1,6 @@
 # conf-scraper
 
-Conference paper scraping and filtering tool. Collects paper metadata (title, authors, abstract, PDF URL) from major CS conferences and stores them in a local SQLite cache for keyword/category/LLM-based filtering.
+Academic paper scraping and filtering tool. Collects paper metadata (title, authors, abstract, PDF URL) from major conferences and journals, and stores them in a local SQLite cache for keyword/category/LLM-based filtering.
 
 ## Installation
 
@@ -8,10 +8,12 @@ Conference paper scraping and filtering tool. Collects paper metadata (title, au
 cargo install --path .
 ```
 
-## Supported Conferences (26)
+## Supported Venues
 
-| Category | ID | Conference | Year Range |
-|----------|----|-----------|------------|
+Run `conf-scraper list-conferences` for the authoritative list.
+
+| Category | ID | Venue | Year Range |
+|----------|----|-------|------------|
 | **NLP** | `acl` | ACL | 2002– |
 | | `emnlp` | EMNLP | 2002– |
 | | `naacl` | NAACL | 2003– |
@@ -24,23 +26,34 @@ cargo install --path .
 | | `sigdial` | SIGDIAL | 2003– |
 | | `ijcnlp` | IJCNLP | 2005– |
 | | `wmt` | WMT | 2006– |
-| **ML/AI** | `neurips` | NeurIPS | 1987– |
-| | `iclr` | ICLR | 2020– |
-| | `icml` | ICML | 2013– |
+| **ML** | `neurips` | NeurIPS | 1987– |
+| | `iclr` | ICLR | 2018– |
+| | `icml` | ICML | 2018– |
 | **CV** | `cvpr` | CVPR | 2013– |
-| | `iccv` | ICCV | 2013– |
+| | `iccv` | ICCV | 2013– (biennial) |
 | **Security** | `usenix-security` | USENIX Security | 2014– |
 | | `ndss` | NDSS | 2014– |
 | | `sp` | IEEE S&P | 1981– |
 | | `ccs` | CCS | 1994– |
+| | `dsn` | IEEE/IFIP DSN | 2000– |
+| | `raid` | RAID | 1998– |
+| | `esorics` | ESORICS | 1990– |
+| | `dimva` | DIMVA | 2004– |
+| | `acsac` | ACSAC | 1985– |
+| | `cns` | IEEE CNS | 2013– |
 | **Cryptography** | `crypto` | CRYPTO | 1981– |
 | | `eurocrypt` | EUROCRYPT | 1985– |
-| **Simulation** | `wsc` | WSC | 1968– |
-| **Agents** | `aamas` | AAMAS | 2002– |
-
-```bash
-conf-scraper list-conferences
-```
+| | `asiacrypt` | ASIACRYPT | 1991– |
+| | `eprint` | IACR ePrint | 1996– |
+| **Networking** | `sigcomm` | ACM SIGCOMM | 1988– |
+| | `infocom` | IEEE INFOCOM | 1982– |
+| | `imc` | IMC | 2001– |
+| **Data Mining** | `kdd` | KDD | 1995– |
+| | `icdm` | IEEE ICDM | 2001– |
+| **Multi-Agent** | `aamas` | AAMAS | 2013– |
+| **Simulation** | `jasss` | JASSS | 1998– |
+| | `wsc` | WSC | 1968– |
+| **Sociology** | `jms` | J. Math. Sociol. | 1971– |
 
 ## Usage
 
@@ -60,6 +73,9 @@ conf-scraper sync --conference crypto --year 2020-2024
 
 # Sync IEEE S&P 2024 (via DBLP API, no abstracts)
 conf-scraper sync --conference sp --year 2024
+
+# Sync Journal of Mathematical Sociology 2020-2024 (via OpenAlex API)
+conf-scraper sync --conference jms --year 2020-2024
 
 # Incremental sync (skip already-completed years)
 conf-scraper sync --conference emnlp --year 2020-2024 --incremental
@@ -120,8 +136,8 @@ conf-scraper cache clear  # clear all
 
 ## Data Sources
 
-| Conference | Source | Method | Abstracts |
-|-----------|--------|--------|-----------|
+| Venues | Source | Method | Abstracts |
+|--------|--------|--------|-----------|
 | ACL, EMNLP, NAACL, COLING, EACL, AACL, LREC, CoNLL, SemEval, SIGDIAL, IJCNLP, WMT | ACL Anthology (GitHub XML) | XML parse | Yes |
 | NeurIPS | papers.nips.cc | HTML scrape (2-pass) | Yes |
 | ICLR | OpenReview API (v1/v2) | REST API | Yes |
@@ -130,8 +146,13 @@ conf-scraper cache clear  # clear all
 | USENIX Security | usenix.org | HTML scrape (10s crawl delay) | Yes |
 | NDSS | ndss-symposium.org | HTML scrape (2-pass) | Yes |
 | AAMAS | ifaamas.org | HTML scrape | No |
-| CRYPTO, EUROCRYPT | CryptoDB API (iacr.org) | JSON API | Yes |
-| IEEE S&P, CCS, WSC | DBLP Search API (dblp.org) | JSON API | No |
+| CRYPTO, EUROCRYPT, ASIACRYPT | CryptoDB API (iacr.org) | JSON API | Yes |
+| IACR ePrint | eprint.iacr.org | HTML scrape | Yes |
+| IEEE S&P, CCS, DSN, RAID, ESORICS, DIMVA, ACSAC, CNS, INFOCOM, SIGCOMM, IMC, KDD, ICDM, WSC | DBLP Search API (dblp.org) | JSON API | No |
+| JASSS | jasss.org | HTML scrape | Yes |
+| J. Math. Sociol. | OpenAlex API (api.openalex.org) | JSON API (ISSN filter) | Partial |
+
+Abstracts marked **No** or **Partial** are supplemented by the enrichment pipeline (HTML → PDF → LLM tiers).
 
 ## Configuration
 
@@ -150,7 +171,7 @@ conf-scraper cache clear  # clear all
 # Build
 cargo build
 
-# Run tests (195 tests)
+# Run tests
 cargo test
 
 # Run with verbose logging

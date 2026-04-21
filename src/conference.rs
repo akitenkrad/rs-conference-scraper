@@ -73,7 +73,10 @@ pub fn list_conferences() -> Vec<(&'static str, &'static str, &'static str)> {
         ("eurocrypt", "EUROCRYPT", "Cryptography"),
         ("asiacrypt", "ASIACRYPT", "Cryptography"),
         // Simulation
+        ("jasss", "JASSS", "Simulation"),
         ("wsc", "WSC", "Simulation"),
+        // Sociology
+        ("jms", "J. Math. Sociol.", "Sociology"),
         // Preprint
         ("eprint", "IACR ePrint", "Cryptography"),
     ]
@@ -197,6 +200,20 @@ pub fn get_scraper(
         )),
         "eprint" => Ok(Arc::new(
             crate::scraper::eprint::EprintScraper::new().with_interval(interval),
+        )),
+        "jasss" => Ok(Arc::new(
+            crate::scraper::jasss::JasssScraper::new().with_interval(interval),
+        )),
+        // Journal of Mathematical Sociology (OpenAlex, ISSN 0022-250X)
+        "jms" => Ok(Arc::new(
+            crate::scraper::openalex::OpenAlexScraper::new(
+                "jms",
+                "J. Math. Sociol.",
+                "0022-250X",
+                1971,
+                2025,
+            )
+            .with_interval(interval),
         )),
         _ => bail!(
             "Unknown conference: '{}'. Use 'list-conferences' to see available conferences.",

@@ -10,8 +10,10 @@ pub mod dblp;
 pub mod eprint;
 pub mod iclr;
 pub mod icml;
+pub mod jasss;
 pub mod ndss;
 pub mod neurips;
+pub mod openalex;
 pub mod usenix;
 
 /// ブラウザ偽装済みHTTPクライアントを生成
