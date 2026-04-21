@@ -274,7 +274,10 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
         }
 
         // Tier 3: arXiv（レート制限: 3秒間隔）
-        if abstract_text.is_empty() {
+        // arXivプレプリントが存在しない会議（IEEE/ACM系等）ではスキップ
+        if abstract_text.is_empty()
+            && crate::conference::has_arxiv_preprints(&paper.conference)
+        {
             pb.set_message(counts.build_msg(&ActiveTier::ArXiv));
             // arXivのレート制限を守るため3秒待つ
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;

@@ -82,6 +82,26 @@ pub fn list_conferences() -> Vec<(&'static str, &'static str, &'static str)> {
     ]
 }
 
+/// arXivにプレプリントが存在しうる会議かどうかを返す
+///
+/// NLP/ML/CV系の会議はarXivプレプリントが一般的だが，
+/// IEEE/ACM系のネットワーク・セキュリティ会議やシミュレーション会議では
+/// arXivプレプリントがほぼ存在しないためスキップして高速化する．
+pub fn has_arxiv_preprints(conference_id: &str) -> bool {
+    matches!(
+        conference_id,
+        // NLP (ACL Anthology系)
+        "acl" | "emnlp" | "naacl" | "coling" | "eacl" | "aacl"
+        | "lrec" | "conll" | "semeval" | "sigdial" | "ijcnlp" | "wmt"
+        // ML
+        | "neurips" | "iclr" | "icml"
+        // CV
+        | "cvpr" | "iccv"
+        // Cryptography (ePrint経由でarXiv投稿もある)
+        | "crypto" | "eurocrypt" | "asiacrypt" | "eprint"
+    )
+}
+
 /// 会議IDからスクレイパーインスタンスを取得
 pub fn get_scraper(
     id: &str,
