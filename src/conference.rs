@@ -75,8 +75,14 @@ pub fn list_conferences() -> Vec<(&'static str, &'static str, &'static str)> {
         // Simulation
         ("jasss", "JASSS", "Simulation"),
         ("wsc", "WSC", "Simulation"),
+        ("sng", "Simulation & Gaming", "Simulation"),
         // Sociology
         ("jms", "J. Math. Sociol.", "Sociology"),
+        // Japanese journals (CiNii Research)
+        ("tjsai", "人工知能学会論文誌", "Japanese"),
+        ("ipsj-jnl", "情報処理学会論文誌", "Japanese"),
+        ("ieice-d", "電子情報通信学会論文誌D", "Japanese"),
+        ("jasag-sng", "シミュレーション&ゲーミング (JASAG)", "Simulation"),
         // Preprint
         ("eprint", "IACR ePrint", "Cryptography"),
     ]
@@ -235,6 +241,48 @@ pub fn get_scraper(
             )
             .with_interval(interval),
         )),
+        // Simulation & Gaming (SAGE, OpenAlex, ISSN 1046-8781)
+        "sng" => Ok(Arc::new(
+            crate::scraper::openalex::OpenAlexScraper::new(
+                "sng",
+                "Simulation & Gaming",
+                "1046-8781",
+                1976,
+                2026,
+            )
+            .with_interval(interval),
+        )),
+        // CiNii Research API (和文ジャーナル)．appid は環境変数 `CINII_APPID` 必須．
+        "tjsai" | "ipsj-jnl" | "ieice-d" | "jasag-sng" => {
+            let appid = std::env::var("CINII_APPID")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "CINII_APPID environment variable is required for CiNii Research API \
+                         (conference '{}'). Get one at https://support.nii.ac.jp/ja/cir/r_opensearch",
+                        id
+                    )
+                })?;
+            let (name, issn, year_start, year_end) = match id {
+                "tjsai" => ("人工知能学会論文誌", "1346-8030", 1986_u16, 2025_u16),
+                "ipsj-jnl" => ("情報処理学会論文誌", "1882-7764", 1960_u16, 2025_u16),
+                "ieice-d" => ("電子情報通信学会論文誌D", "1881-0225", 1985_u16, 2025_u16),
+                "jasag-sng" => (
+                    "シミュレーション&ゲーミング (JASAG)",
+                    "2434-0472",
+                    1991_u16,
+                    2025_u16,
+                ),
+                _ => unreachable!(),
+            };
+            Ok(Arc::new(
+                crate::scraper::cinii::CiniiScraper::new(
+                    id, name, issn, &appid, year_start, year_end,
+                )
+                .with_interval(interval),
+            ))
+        }
         _ => bail!(
             "Unknown conference: '{}'. Use 'list-conferences' to see available conferences.",
             id
