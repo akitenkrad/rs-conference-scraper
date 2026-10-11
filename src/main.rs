@@ -10,7 +10,7 @@ mod types;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{CacheCommands, Cli, Commands};
+use cli::{CacheCommands, Cli, Commands, QueryCommands};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -22,8 +22,10 @@ async fn main() -> Result<()> {
     } else {
         "conf_scraper=info"
     };
+    // ログは標準エラーへ．標準出力は結果（`query` / `filter` の JSON）専用にする
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
+        .with_writer(std::io::stderr)
         .init();
 
     // Resolve cache directory
@@ -259,6 +261,38 @@ async fn main() -> Result<()> {
                     println!("Deleted {} papers from cache.", deleted);
                 }
             }
+        }
+        Commands::Query { command } => {
+            let db = cache::CacheDb::open(&cache_dir)?;
+            let json = match command {
+                QueryCommands::Catalog => serde_json::to_string(&db.query_catalog()?)?,
+                QueryCommands::Papers(args) => {
+                    let q = cache::query::PaperQuery {
+                        conferences: args.conference.clone(),
+                        years: args
+                            .year
+                            .as_deref()
+                            .map(cli::parse_year_range)
+                            .transpose()?
+                            .unwrap_or_default(),
+                        q: args.q.clone(),
+                        fields: args
+                            .fields
+                            .iter()
+                            .map(|f| cache::query::SearchField::parse(f))
+                            .collect::<Result<_>>()?,
+                        offset: args.offset,
+                        limit: args.limit,
+                        sort: cache::query::SortOrder::parse(&args.sort)?,
+                        facets: args.facets,
+                    };
+                    serde_json::to_string(&db.query_papers(&q)?)?
+                }
+                QueryCommands::Paper { id, conference, year } => {
+                    serde_json::to_string(&db.query_paper(&id, &conference, year)?)?
+                }
+            };
+            println!("{}", json);
         }
         Commands::ListConferences => {
             let conferences = conference::list_conferences();

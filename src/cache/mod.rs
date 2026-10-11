@@ -3,6 +3,7 @@ use rusqlite::Connection;
 use std::path::Path;
 
 pub mod db;
+pub mod query;
 
 pub struct CacheDb {
     conn: Connection,

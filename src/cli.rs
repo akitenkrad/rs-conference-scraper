@@ -34,6 +34,63 @@ pub enum Commands {
     Enrich(EnrichArgs),
     /// 対応会議の一覧表示
     ListConferences,
+    /// ダッシュボード向けの読み出し（標準出力に JSON だけを出す）
+    Query {
+        #[command(subcommand)]
+        command: QueryCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum QueryCommands {
+    /// 学会 × 年の目次（件数・アブストラクトの有無・同期状態）
+    Catalog,
+    /// 論文一覧を 1 ページ分（アブストラクトは含めない）
+    Papers(QueryPapersArgs),
+    /// 論文 1 件（アブストラクト込み）．見つからなければ {"paper": null}
+    Paper {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        conference: String,
+        #[arg(long)]
+        year: u16,
+    },
+}
+
+#[derive(Args)]
+pub struct QueryPapersArgs {
+    /// 会議ID (カンマ区切りで複数指定可．省略時: 全会議)
+    #[arg(long, value_delimiter = ',')]
+    pub conference: Vec<String>,
+
+    /// 対象年度 (例: 2020-2024 または 2024．省略時: 全年度)
+    #[arg(long)]
+    pub year: Option<String>,
+
+    /// 検索語 (空白区切りで AND．大文字小文字は区別しない)
+    #[arg(long, default_value = "")]
+    pub q: String,
+
+    /// 検索対象 [title|authors|abstract] (カンマ区切り)
+    #[arg(long, value_delimiter = ',', default_value = "title")]
+    pub fields: Vec<String>,
+
+    /// 先頭から飛ばす件数
+    #[arg(long, default_value = "0")]
+    pub offset: usize,
+
+    /// 1 ページの件数 (1〜500)
+    #[arg(long, default_value = "50")]
+    pub limit: usize,
+
+    /// 並び順 [year-desc|year-asc|title]
+    #[arg(long, default_value = "year-desc")]
+    pub sort: String,
+
+    /// 会議・年ごとの件数も返す (その軸の絞り込みだけを外して数える)
+    #[arg(long)]
+    pub facets: bool,
 }
 
 #[derive(Args)]
