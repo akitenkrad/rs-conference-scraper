@@ -164,6 +164,18 @@ conf-scraper cache clear --conference neurips --year 2023
 conf-scraper cache clear  # clear all
 ```
 
+### Scheduled sync
+
+`tools/weekly_sync.sh` runs `sync --incremental` for every venue in the catalog over the
+previous and current year. Because `--incremental` re-checks completed years for those two
+years, editions that were only partially published at the last sync are filled in later.
+It reads `CINII_APPID` from `~/.zshrc` when the variable is not set (and skips the CiNii
+venues if it is still missing), and refuses to start while another run holds its lock.
+
+```bash
+bash tools/weekly_sync.sh   # e.g. from a weekly launchd agent
+```
+
 ## Data Sources
 
 | Venues | Source | Method | Abstracts |
