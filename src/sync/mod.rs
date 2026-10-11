@@ -138,6 +138,17 @@ pub async fn run_sync(args: &SyncArgs, cache_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `--incremental` でも，完了済みの年の一覧を取り直すか．
+///
+/// 開催直後の年は，取得元に一部しか載っていない段階で同期して «完了» になることがある
+/// （例: NeurIPS 2025 を Creative AI トラックの 64 件だけで完了にした．2026-10-11）．
+/// そのため今年と前年は完了済みでも一覧を取り直し，未取得の論文があれば差分だけを取る．
+/// 新しい論文が無ければ下の «pending が空» の経路で完了のまま終わる．
+/// それより古い年は変わらないものとして飛ばす（毎回の一覧取得を増やさないため）．
+fn recheck_completed_year(year: u16, current_year: u16) -> bool {
+    year.saturating_add(1) >= current_year
+}
+
 async fn run_sync_single(
     scraper: Arc<dyn conference::ConferenceScraper>,
     config: &SyncConfig,
@@ -169,7 +180,10 @@ async fn run_sync_single(
 
     for year in &years {
         // Check if already completed
-        if config.incremental && db.is_year_completed(scraper.id(), *year)? {
+        if config.incremental
+            && db.is_year_completed(scraper.id(), *year)?
+            && !recheck_completed_year(*year, conference::current_year())
+        {
             progress.skip_year(*year, "--incremental");
             continue;
         }
@@ -193,6 +207,17 @@ async fn run_sync_single(
             }
         };
         let total = paper_entries.len();
+
+        // 一覧が空の年（未開催・未公開）は completed にしない．
+        // completed にすると，公開後も --incremental で永久に飛ばされる．
+        if total == 0 {
+            progress.log(&format!(
+                "  WARN: No papers listed for {} (not yet published?), not marking completed",
+                year
+            ));
+            progress.finish_year();
+            continue;
+        }
 
         // Filter out already fetched papers
         let fetched_ids = db.fetched_ids(scraper.id(), *year)?;
@@ -284,4 +309,19 @@ async fn run_sync_single(
     progress.finish();
     tracing::info!("Sync completed for {}", scraper.name());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recheck_only_current_and_previous_year() {
+        assert!(recheck_completed_year(2026, 2026));
+        assert!(recheck_completed_year(2025, 2026));
+        assert!(!recheck_completed_year(2024, 2026));
+        assert!(!recheck_completed_year(1990, 2026));
+        // 来年の回（年の範囲に入ることは無いが）も取り直す側に倒す
+        assert!(recheck_completed_year(2027, 2026));
+    }
 }
