@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "conf-scraper", about = "Conference paper scraping and filtering tool")]
+#[command(name = "conf-scraper", version, about = "Conference paper scraping and filtering tool")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -279,6 +279,19 @@ pub fn parse_year_range(year_str: &str) -> anyhow::Result<Vec<u16>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_flag_prints_crate_version() {
+        let err = match Cli::try_parse_from(["conf-scraper", "--version"]) {
+            Ok(_) => panic!("--version should exit early"),
+            Err(e) => e,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(
+            err.to_string().trim(),
+            format!("conf-scraper {}", env!("CARGO_PKG_VERSION"))
+        );
+    }
 
     #[test]
     fn single_year() {
