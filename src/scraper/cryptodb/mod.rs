@@ -41,10 +41,10 @@ impl CryptoDbScraper {
     /// venue_idに基づいて対応年の範囲を返す
     fn year_range(&self) -> (u16, u16) {
         match self.venue_id.as_str() {
-            "crypto" => (1981, 2025),
-            "eurocrypt" => (1985, 2025),
-            "asiacrypt" => (1991, 2025),
-            _ => (2000, 2025),
+            "crypto" => (1981, crate::conference::current_year()),
+            "eurocrypt" => (1985, crate::conference::current_year()),
+            "asiacrypt" => (1991, crate::conference::current_year()),
+            _ => (2000, crate::conference::current_year()),
         }
     }
 }
@@ -135,8 +135,8 @@ mod tests {
         let client = reqwest::Client::new();
         let years = scraper.fetch_years(&client).await.unwrap();
         assert_eq!(*years.first().unwrap(), 1981);
-        assert_eq!(*years.last().unwrap(), 2025);
-        assert_eq!(years.len(), 45);
+        assert_eq!(*years.last().unwrap(), crate::conference::current_year());
+        assert_eq!(years.len(), (crate::conference::current_year() - 1981 + 1) as usize);
     }
 
     #[tokio::test]
@@ -145,8 +145,8 @@ mod tests {
         let client = reqwest::Client::new();
         let years = scraper.fetch_years(&client).await.unwrap();
         assert_eq!(*years.first().unwrap(), 1985);
-        assert_eq!(*years.last().unwrap(), 2025);
-        assert_eq!(years.len(), 41);
+        assert_eq!(*years.last().unwrap(), crate::conference::current_year());
+        assert_eq!(years.len(), (crate::conference::current_year() - 1985 + 1) as usize);
     }
 
     #[tokio::test]

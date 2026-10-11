@@ -5,6 +5,15 @@ use async_trait::async_trait;
 
 use crate::types::{Paper, PaperListEntry};
 
+/// 年の上限として使う「今年」（ローカル時刻）．
+///
+/// 上限を固定値で持つと毎年取り残しが出るため，範囲で年を持つスクレイパーはこれを上限にする．
+/// まだ開催されていない回を指定した場合は，取得元に無いので 0 件になる．
+pub fn current_year() -> u16 {
+    use chrono::Datelike;
+    chrono::Local::now().year() as u16
+}
+
 /// 会議スクレイパーの共通インターフェース
 #[async_trait]
 pub trait ConferenceScraper: Send + Sync {
@@ -166,62 +175,62 @@ pub fn get_scraper(
         }
         // DBLP API
         "sp" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("sp", "IEEE S&P", "sp", 1981, 2025)
+            crate::scraper::dblp::DblpScraper::new("sp", "IEEE S&P", "sp", 1981, current_year())
                 .with_interval(interval),
         )),
         "ccs" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("ccs", "CCS", "ccs", 1994, 2025)
+            crate::scraper::dblp::DblpScraper::new("ccs", "CCS", "ccs", 1994, current_year())
                 .with_interval(interval),
         )),
         "wsc" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("wsc", "WSC", "wsc", 1968, 2025)
+            crate::scraper::dblp::DblpScraper::new("wsc", "WSC", "wsc", 1968, current_year())
                 .with_interval(interval),
         )),
         // IEEE conferences (DBLP)
         "infocom" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("infocom", "IEEE INFOCOM", "infocom", 1982, 2025)
+            crate::scraper::dblp::DblpScraper::new("infocom", "IEEE INFOCOM", "infocom", 1982, current_year())
                 .with_interval(interval),
         )),
         "icdm" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("icdm", "IEEE ICDM", "icdm", 2001, 2025)
+            crate::scraper::dblp::DblpScraper::new("icdm", "IEEE ICDM", "icdm", 2001, current_year())
                 .with_interval(interval),
         )),
         "cns" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("cns", "IEEE CNS", "cns", 2013, 2025)
+            crate::scraper::dblp::DblpScraper::new("cns", "IEEE CNS", "cns", 2013, current_year())
                 .with_interval(interval),
         )),
         "dsn" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("dsn", "IEEE/IFIP DSN", "dsn", 2000, 2025)
+            crate::scraper::dblp::DblpScraper::new("dsn", "IEEE/IFIP DSN", "dsn", 2000, current_year())
                 .with_interval(interval),
         )),
         // Security conferences (DBLP)
         "raid" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("raid", "RAID", "raid", 1998, 2025)
+            crate::scraper::dblp::DblpScraper::new("raid", "RAID", "raid", 1998, current_year())
                 .with_interval(interval),
         )),
         "esorics" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("esorics", "ESORICS", "esorics", 1990, 2025)
+            crate::scraper::dblp::DblpScraper::new("esorics", "ESORICS", "esorics", 1990, current_year())
                 .with_interval(interval),
         )),
         "dimva" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("dimva", "DIMVA", "dimva", 2004, 2025)
+            crate::scraper::dblp::DblpScraper::new("dimva", "DIMVA", "dimva", 2004, current_year())
                 .with_interval(interval),
         )),
         "acsac" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("acsac", "ACSAC", "acsac", 1985, 2025)
+            crate::scraper::dblp::DblpScraper::new("acsac", "ACSAC", "acsac", 1985, current_year())
                 .with_interval(interval),
         )),
         // ACM conferences (DBLP)
         "kdd" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("kdd", "KDD", "kdd", 1995, 2025)
+            crate::scraper::dblp::DblpScraper::new("kdd", "KDD", "kdd", 1995, current_year())
                 .with_interval(interval),
         )),
         "sigcomm" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("sigcomm", "ACM SIGCOMM", "sigcomm", 1988, 2025)
+            crate::scraper::dblp::DblpScraper::new("sigcomm", "ACM SIGCOMM", "sigcomm", 1988, current_year())
                 .with_interval(interval),
         )),
         "imc" => Ok(Arc::new(
-            crate::scraper::dblp::DblpScraper::new("imc", "IMC", "imc", 2001, 2025)
+            crate::scraper::dblp::DblpScraper::new("imc", "IMC", "imc", 2001, current_year())
                 .with_interval(interval),
         )),
         "eprint" => Ok(Arc::new(
@@ -237,7 +246,7 @@ pub fn get_scraper(
                 "J. Math. Sociol.",
                 "0022-250X",
                 1971,
-                2025,
+                current_year(),
             )
             .with_interval(interval),
         )),
@@ -248,7 +257,7 @@ pub fn get_scraper(
                 "Simulation & Gaming",
                 "1046-8781",
                 1976,
-                2026,
+                current_year(),
             )
             .with_interval(interval),
         )),
@@ -265,14 +274,14 @@ pub fn get_scraper(
                     )
                 })?;
             let (name, issn, year_start, year_end) = match id {
-                "tjsai" => ("人工知能学会論文誌", "1346-8030", 1986_u16, 2025_u16),
-                "ipsj-jnl" => ("情報処理学会論文誌", "1882-7764", 1960_u16, 2025_u16),
-                "ieice-d" => ("電子情報通信学会論文誌D", "1881-0225", 1985_u16, 2025_u16),
+                "tjsai" => ("人工知能学会論文誌", "1346-8030", 1986_u16, current_year()),
+                "ipsj-jnl" => ("情報処理学会論文誌", "1882-7764", 1960_u16, current_year()),
+                "ieice-d" => ("電子情報通信学会論文誌D", "1881-0225", 1985_u16, current_year()),
                 "jasag-sng" => (
                     "シミュレーション&ゲーミング (JASAG)",
                     "2434-0472",
                     1991_u16,
-                    2025_u16,
+                    current_year(),
                 ),
                 _ => unreachable!(),
             };

@@ -20,29 +20,39 @@ fn parse_paper_list(html: &str, base_url: &str) -> Result<Vec<PaperListEntry>> {
     let document = Html::parse_document(html);
     let paper_selector = Selector::parse("div.paper").unwrap();
     let title_link_selector = Selector::parse("p.title a").unwrap();
+    let title_selector = Selector::parse("p.title").unwrap();
     let authors_selector = Selector::parse("span.authors").unwrap();
     let links_selector = Selector::parse("p.links a").unwrap();
 
     let mut entries = Vec::new();
 
     for paper_el in document.select(&paper_selector) {
-        // Extract title and detail URL
-        let title_link = match paper_el.select(&title_link_selector).next() {
+        // Extract title and detail URL.
+        // 旧形式はタイトル自体がリンク（`p.title a`）．現行形式（2024 年頃〜）はタイトルが
+        // ただのテキストで，詳細ページへのリンクは `p.links` の "abs" にある．
+        let title_link = paper_el.select(&title_link_selector).next();
+        let title_el = match title_link.or_else(|| paper_el.select(&title_selector).next()) {
             Some(el) => el,
             None => continue,
         };
 
-        let title = title_link
+        let title = title_el
             .text()
             .collect::<Vec<_>>()
             .join(" ")
-            .trim()
-            .to_string();
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         if title.is_empty() {
             continue;
         }
 
-        let href = match title_link.value().attr("href") {
+        let href = match title_link.and_then(|el| el.value().attr("href")).or_else(|| {
+            paper_el
+                .select(&links_selector)
+                .find(|el| el.text().collect::<String>().trim() == "abs")
+                .and_then(|el| el.value().attr("href"))
+        }) {
             Some(h) => h,
             None => continue,
         };
@@ -206,5 +216,39 @@ mod tests {
         let entries = parse_paper_list(html, "https://proceedings.mlr.press").unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].title, "Valid Title");
+    }
+
+    #[test]
+    fn test_parse_paper_list_current_format() {
+        // 2024 年頃からの PMLR: タイトルはリンクではなく，詳細は links の "abs"
+        let html = r#"
+<div class="paper">
+  <p class="title">Revisiting Character-level Adversarial Attacks for Language Models</p>
+  <p class="details">
+    <span class="authors">Elias Abad Rocamora,&nbsp;Yongtao Wu,&nbsp;Volkan Cevher</span>;
+    <span class="info"><i>Proceedings of the 41st ICML</i>, PMLR 235:1-30</span>
+  </p>
+  <p class="links">
+    [<a href="https://proceedings.mlr.press/v235/abad-rocamora24a.html">abs</a>][<a href="https://raw.githubusercontent.com/mlresearch/v235/main/assets/abad-rocamora24a/abad-rocamora24a.pdf" target="_blank">Download PDF</a>][<a href="https://openreview.net/forum?id=AZWqXfM6z9">OpenReview</a>]</p>
+</div>
+<div class="paper">
+  <p class="title">No Abs Link</p>
+  <p class="links">[<a href="https://example.com/x.pdf">Download PDF</a>]</p>
+</div>
+"#;
+        let entries = parse_paper_list(html, "https://proceedings.mlr.press").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].title,
+            "Revisiting Character-level Adversarial Attacks for Language Models"
+        );
+        assert_eq!(
+            entries[0].detail_url,
+            "https://proceedings.mlr.press/v235/abad-rocamora24a.html"
+        );
+        assert_eq!(
+            entries[0].authors,
+            vec!["Elias Abad Rocamora", "Yongtao Wu", "Volkan Cevher"]
+        );
     }
 }

@@ -2,7 +2,7 @@
 /// Volume 1 = 1998, Volume N = 1997 + N.
 /// 各 Volume は通常 4 issue（Volume 2 のみ 3 issue）．
 pub fn available_years() -> Vec<u16> {
-    (1998..=2026).collect()
+    (1998..=crate::conference::current_year()).collect()
 }
 
 /// 年度から Volume 番号を算出
@@ -26,7 +26,7 @@ mod tests {
     fn test_available_years_range() {
         let years = available_years();
         assert_eq!(years.first(), Some(&1998));
-        assert_eq!(years.last(), Some(&2026));
+        assert_eq!(years.last(), Some(&crate::conference::current_year()));
     }
 
     #[test]

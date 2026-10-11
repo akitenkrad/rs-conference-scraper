@@ -3,17 +3,137 @@ use scraper::{Html, Selector};
 use std::time::Duration;
 
 use crate::scraper::fetch_with_sleep;
-use crate::types::PaperListEntry;
+use crate::types::{compute_id, Paper, PaperListEntry};
 
+/// 年別一覧の 1 ページあたりの件数（`?offset=` の刻み）
+const PAGE_SIZE: usize = 100;
+/// ページ送りの上限（1 年あたり最大 PAGE_SIZE * MAX_PAGES 件）
+const MAX_PAGES: usize = 200;
+
+/// 年別一覧を全ページ取得する．
+///
+/// 現行の一覧ページ（`.paperList`）はタイトル・著者・カテゴリ・アブストラクトを含むので，
+/// 詳細ページを取らずに `Paper` まで組み立てて返す．現行形式で 1 件も取れない場合は
+/// 旧形式のパーサで `PaperListEntry` だけを返す（`Paper` は空）．
 pub async fn fetch_paper_list(
     client: &reqwest::Client,
     base_url: &str,
     year: u16,
     interval: Duration,
-) -> Result<Vec<PaperListEntry>> {
-    let url = format!("{}/{}", base_url, year);
-    let html = fetch_with_sleep(client, &url, interval).await?;
-    parse_paper_list(&html, base_url, year)
+) -> Result<(Vec<PaperListEntry>, Vec<Paper>)> {
+    let mut entries = Vec::new();
+    let mut papers = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for page in 0..MAX_PAGES {
+        let url = format!("{}/{}/?offset={}", base_url, year, page * PAGE_SIZE);
+        let html = fetch_with_sleep(client, &url, interval).await?;
+        let parsed = parse_paper_list_page(&html, base_url, year, "eprint");
+
+        if parsed.is_empty() {
+            if page == 0 {
+                return Ok((parse_paper_list(&html, base_url, year)?, Vec::new()));
+            }
+            break;
+        }
+
+        let mut new_count = 0;
+        for (entry, paper) in parsed {
+            if seen.insert(entry.detail_url.clone()) {
+                entries.push(entry);
+                papers.push(paper);
+                new_count += 1;
+            }
+        }
+        // offset が範囲外でも同じページを返すサイトに備え，新規が無ければ終了
+        if new_count == 0 {
+            break;
+        }
+    }
+
+    Ok((entries, papers))
+}
+
+/// 現行形式の一覧ページ（`div.paperList`）を解析する．
+///
+/// 1 論文は 2 つの兄弟 `div` で表される:
+///   - 見出し: `<div class="flex-grow-1"><a href="/2024/2100">2024/2100</a> ...`
+///   - 本体:   `.papertitle` / `.summaryauthors` / `.category` / `.paper-abstract`
+fn parse_paper_list_page(
+    html: &str,
+    base_url: &str,
+    year: u16,
+    conference: &str,
+) -> Vec<(PaperListEntry, Paper)> {
+    let document = Html::parse_document(html);
+    let list_sel = Selector::parse("div.paperList").unwrap();
+    let link_sel = Selector::parse("a[href]").unwrap();
+    let title_sel = Selector::parse(".papertitle").unwrap();
+    let authors_sel = Selector::parse(".summaryauthors").unwrap();
+    let category_sel = Selector::parse(".category").unwrap();
+    let abstract_sel = Selector::parse(".paper-abstract").unwrap();
+
+    let text_of = |el: scraper::ElementRef| el.text().collect::<String>().trim().to_string();
+
+    let mut out = Vec::new();
+    for list in document.select(&list_sel) {
+        let mut current_url: Option<String> = None;
+        for child in list.children().filter_map(scraper::ElementRef::wrap) {
+            if let Some(title_el) = child.select(&title_sel).next() {
+                let Some(detail_url) = current_url.take() else {
+                    continue;
+                };
+                let title = text_of(title_el);
+                if title.is_empty() {
+                    continue;
+                }
+                let authors = child
+                    .select(&authors_sel)
+                    .next()
+                    .map(|el| parse_author_names(&text_of(el)))
+                    .unwrap_or_default();
+                let mut categories: Vec<String> = Vec::new();
+                for el in child.select(&category_sel) {
+                    let c = text_of(el);
+                    if !c.is_empty() && !categories.contains(&c) {
+                        categories.push(c);
+                    }
+                }
+                let abstract_text = child
+                    .select(&abstract_sel)
+                    .next()
+                    .map(text_of)
+                    .unwrap_or_default();
+
+                let entry = PaperListEntry {
+                    title: title.clone(),
+                    authors: authors.clone(),
+                    detail_url: detail_url.clone(),
+                    track: None,
+                };
+                let paper = Paper {
+                    id: compute_id(&title),
+                    conference: conference.to_string(),
+                    year,
+                    hash: super::paper_page::compute_hash(&title, &abstract_text),
+                    pdf_url: Some(format!("{}.pdf", detail_url)),
+                    title,
+                    authors,
+                    r#abstract: abstract_text,
+                    url: detail_url,
+                    categories,
+                };
+                out.push((entry, paper));
+            } else if let Some(href) = child
+                .select(&link_sel)
+                .filter_map(|a| a.value().attr("href"))
+                .find(|h| is_paper_link(h, year))
+            {
+                current_url = Some(normalize_url(href, base_url));
+            }
+        }
+    }
+    out
 }
 
 fn parse_paper_list(html: &str, base_url: &str, year: u16) -> Result<Vec<PaperListEntry>> {
@@ -377,5 +497,62 @@ mod tests {
         let html = r#"<html><body><p>No papers yet.</p></body></html>"#;
         let entries = parse_paper_list(html, "https://eprint.iacr.org", 2024).unwrap();
         assert!(entries.is_empty());
+    }
+
+    const CURRENT_FORMAT: &str = r#"
+<div class="paperList ms-lg-4 me-lg-4">
+  <div class="d-flex mb-1">
+    <div class="flex-grow-1"><a href="/2024/2100">2024/2100</a>
+      <a class="ms-2" href="/2024/2100.pdf">(PDF)</a>
+    </div>
+    <div><small>Last updated:&nbsp; 2024-12-31</small></div>
+  </div>
+  <div class="ms-3 ms-md-5 mb-3">
+    <div class="d-flex justify-content-between">
+      <div class="papertitle">Compact Key Storage in the Standard Model</div>
+      <div class="ms-3 d-none d-md-block">
+        <a href="/search?category=PROTOCOLS"><small class="badge category category-PROTOCOLS">Cryptographic protocols</small></a>
+      </div>
+    </div>
+    <div class="summaryauthors">Yevgeniy Dodis and Daniel Jost</div>
+    <div class="d-block d-md-none">
+      <a href="/search?category=PROTOCOLS"><small class="badge category category-PROTOCOLS">Cryptographic protocols</small></a>
+    </div>
+    <div><div id="abstract-2024-2100" class="paper-abstract">In recent work [Crypto&#39;24], we study CKS.</div></div>
+  </div>
+  <div class="d-flex mb-1">
+    <div class="flex-grow-1"><a href="/2024/2099">2024/2099</a></div>
+  </div>
+  <div class="ms-3 ms-md-5 mb-3">
+    <div class="papertitle">Second Paper</div>
+    <div class="summaryauthors">Alice, Bob, and Carol</div>
+  </div>
+</div>
+"#;
+
+    #[test]
+    fn test_parse_paper_list_page_current_format() {
+        let parsed = parse_paper_list_page(CURRENT_FORMAT, "https://eprint.iacr.org", 2024, "eprint");
+        assert_eq!(parsed.len(), 2);
+
+        let (entry, paper) = &parsed[0];
+        assert_eq!(entry.title, "Compact Key Storage in the Standard Model");
+        assert_eq!(entry.detail_url, "https://eprint.iacr.org/2024/2100");
+        assert_eq!(paper.authors, vec!["Yevgeniy Dodis", "Daniel Jost"]);
+        assert_eq!(paper.categories, vec!["Cryptographic protocols"]);
+        assert_eq!(paper.r#abstract, "In recent work [Crypto'24], we study CKS.");
+        assert_eq!(paper.pdf_url.as_deref(), Some("https://eprint.iacr.org/2024/2100.pdf"));
+        assert_eq!(paper.id, compute_id(&paper.title));
+
+        let (_, second) = &parsed[1];
+        assert_eq!(second.title, "Second Paper");
+        assert_eq!(second.authors, vec!["Alice", "Bob", "Carol"]);
+        assert!(second.r#abstract.is_empty());
+    }
+
+    #[test]
+    fn test_parse_paper_list_page_ignores_old_format() {
+        let html = r#"<html><body><a href="/2024/001">2024/001</a> <b>Title</b></body></html>"#;
+        assert!(parse_paper_list_page(html, "https://eprint.iacr.org", 2024, "eprint").is_empty());
     }
 }

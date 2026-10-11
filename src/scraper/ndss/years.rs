@@ -1,6 +1,6 @@
 /// NDSS の利用可能な年リストを返す（ハードコード）
 pub fn available_years() -> Vec<u16> {
-    (2014..=2025).collect()
+    (2014..=crate::conference::current_year()).collect()
 }
 
 #[cfg(test)]
@@ -13,13 +13,14 @@ mod tests {
         assert!(years.contains(&2014));
         assert!(years.contains(&2025));
         assert!(!years.contains(&2013));
-        assert!(!years.contains(&2026));
+        assert!(years.contains(&crate::conference::current_year()));
+        assert!(!years.contains(&(crate::conference::current_year() + 1)));
     }
 
     #[test]
     fn test_available_years_count() {
         let years = available_years();
-        assert_eq!(years.len(), 12);
+        assert_eq!(years.len(), (crate::conference::current_year() - 2014 + 1) as usize);
     }
 
     #[test]

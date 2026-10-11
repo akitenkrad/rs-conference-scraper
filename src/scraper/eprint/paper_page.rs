@@ -17,7 +17,7 @@ pub async fn fetch_paper_detail(
     parse_paper_detail(&html, entry, conference, year)
 }
 
-fn compute_hash(title: &str, abstract_text: &str) -> String {
+pub(crate) fn compute_hash(title: &str, abstract_text: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(format!("{}{}", title, abstract_text).as_bytes());
     format!("{:x}", hasher.finalize())

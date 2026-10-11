@@ -1,7 +1,7 @@
 /// AAMAS proceedings available on ifaamas.org (forms/contents.htm format)
 /// Years 2013-2024 use a consistent HTML table-of-contents layout.
 pub fn available_years() -> Vec<u16> {
-    (2013..=2024).collect()
+    (2013..=crate::conference::current_year()).collect()
 }
 
 #[cfg(test)]
@@ -12,8 +12,8 @@ mod tests {
     fn test_available_years_range() {
         let years = available_years();
         assert_eq!(years.first(), Some(&2013));
-        assert_eq!(years.last(), Some(&2024));
-        assert_eq!(years.len(), 12);
+        assert_eq!(years.last(), Some(&crate::conference::current_year()));
+        assert_eq!(years.len(), (crate::conference::current_year() - 2013 + 1) as usize);
     }
 
     #[test]
