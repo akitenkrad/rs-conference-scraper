@@ -1,7 +1,8 @@
 pub mod api;
+pub mod sparql;
 pub mod xml;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -9,17 +10,20 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::conference::ConferenceScraper;
-use crate::types::{compute_id, Paper, PaperListEntry};
+use crate::types::{Paper, PaperListEntry, compute_id};
 
 const DEFAULT_INTERVAL: Duration = Duration::from_millis(1000);
 
-/// DBLP Search API を利用した会議スクレイパー
+/// DBLP を利用した会議スクレイパー
+///
+/// 取得元は SPARQL エンドポイント → Search API → XML Proceedings API の順に試す（MYTASK-3417）．
 pub struct DblpScraper {
     conf_id: String,
     conf_name: String,
     dblp_key: String,
     year_range: (u16, u16),
     interval: Duration,
+    sparql_endpoint: String,
     paper_cache: Arc<RwLock<HashMap<String, Paper>>>,
     cached_years: Arc<RwLock<Option<HashSet<u16>>>>,
 }
@@ -38,6 +42,7 @@ impl DblpScraper {
             dblp_key: dblp_key.to_string(),
             year_range: (year_start, year_end),
             interval: DEFAULT_INTERVAL,
+            sparql_endpoint: sparql::SPARQL_ENDPOINT.to_string(),
             paper_cache: Arc::new(RwLock::new(HashMap::new())),
             cached_years: Arc::new(RwLock::new(None)),
         }
@@ -48,23 +53,80 @@ impl DblpScraper {
         self
     }
 
-    /// 指定年の論文がキャッシュになければ DBLP から取得してキャッシュに保存
-    async fn ensure_year_cached(&self, client: &reqwest::Client, year: u16) -> Result<()> {
-        {
-            if let Some(years) = self.cached_years.read().await.as_ref()
-                && years.contains(&year) {
-                    return Ok(());
-                }
-        }
+    #[cfg(test)]
+    fn with_sparql_endpoint(mut self, endpoint: &str) -> Self {
+        self.sparql_endpoint = endpoint.to_string();
+        self
+    }
 
-        let papers = api::fetch_papers_for_year(
+    /// 指定年の論文を DBLP から取得する．SPARQL → Search API → XML の順に試し，
+    /// どれかが成功すればそれを返す（空の年も成功として扱う）．全部失敗したら 3 つのエラーをまとめる．
+    async fn load_year(&self, client: &reqwest::Client, year: u16) -> Result<Vec<Paper>> {
+        let sparql_err = match sparql::fetch_papers_for_year(
+            client,
+            &self.sparql_endpoint,
+            &self.dblp_key,
+            &self.conf_id,
+            year,
+            self.interval,
+        )
+        .await
+        {
+            Ok(papers) => return Ok(papers),
+            Err(e) => e,
+        };
+        tracing::warn!(
+            "DBLP SPARQL failed ({:#}), falling back to Search API for {} {}",
+            sparql_err,
+            self.conf_id,
+            year
+        );
+
+        let api_err = match api::fetch_papers_for_year(
             client,
             &self.dblp_key,
             &self.conf_id,
             year,
             self.interval,
         )
-        .await?;
+        .await
+        {
+            Ok(papers) => return Ok(papers),
+            Err(e) => e,
+        };
+        tracing::warn!(
+            "DBLP Search API failed ({:#}), falling back to XML proceedings API for {} {}",
+            api_err,
+            self.conf_id,
+            year
+        );
+
+        match xml::fetch_papers_xml(client, &self.dblp_key, &self.conf_id, year, self.interval)
+            .await
+        {
+            Ok(papers) => Ok(papers),
+            Err(xml_err) => bail!(
+                "all DBLP sources failed for {} {}: SPARQL: {:#}; Search API: {:#}; XML: {:#}",
+                self.conf_id,
+                year,
+                sparql_err,
+                api_err,
+                xml_err
+            ),
+        }
+    }
+
+    /// 指定年の論文がキャッシュになければ DBLP から取得してキャッシュに保存
+    async fn ensure_year_cached(&self, client: &reqwest::Client, year: u16) -> Result<()> {
+        {
+            if let Some(years) = self.cached_years.read().await.as_ref()
+                && years.contains(&year)
+            {
+                return Ok(());
+            }
+        }
+
+        let papers = self.load_year(client, year).await?;
 
         let mut cache = self.paper_cache.write().await;
         for paper in papers {
@@ -102,60 +164,18 @@ impl ConferenceScraper for DblpScraper {
         client: &reqwest::Client,
         year: u16,
     ) -> Result<Vec<PaperListEntry>> {
-        // Search API で年ごとにキャッシュを構築し，失敗時は XML API にフォールバック
-        match self.ensure_year_cached(client, year).await {
-            Ok(()) => {
-                let cache = self.paper_cache.read().await;
-                let entries: Vec<PaperListEntry> = cache
-                    .values()
-                    .filter(|p| p.year == year)
-                    .map(|p| PaperListEntry {
-                        title: p.title.clone(),
-                        authors: p.authors.clone(),
-                        detail_url: p.url.clone(),
-                        track: None,
-                    })
-                    .collect();
-
-                Ok(entries)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "DBLP Search API failed ({}), falling back to XML proceedings API for {} {}",
-                    e,
-                    self.conf_id,
-                    year
-                );
-
-                // XML API から論文を取得
-                let papers = xml::fetch_papers_xml(
-                    client,
-                    &self.dblp_key,
-                    &self.conf_id,
-                    year,
-                    self.interval,
-                )
-                .await?;
-
-                // fetch_paper_detail 用にキャッシュに保存
-                let entries: Vec<PaperListEntry> = papers
-                    .iter()
-                    .map(|p| PaperListEntry {
-                        title: p.title.clone(),
-                        authors: p.authors.clone(),
-                        detail_url: p.url.clone(),
-                        track: None,
-                    })
-                    .collect();
-
-                let mut cache = self.paper_cache.write().await;
-                for paper in papers {
-                    cache.insert(paper.id.clone(), paper);
-                }
-
-                Ok(entries)
-            }
-        }
+        self.ensure_year_cached(client, year).await?;
+        let cache = self.paper_cache.read().await;
+        Ok(cache
+            .values()
+            .filter(|p| p.year == year)
+            .map(|p| PaperListEntry {
+                title: p.title.clone(),
+                authors: p.authors.clone(),
+                detail_url: p.url.clone(),
+                track: None,
+            })
+            .collect())
     }
 
     async fn fetch_paper_detail(
@@ -315,5 +335,43 @@ mod tests {
         let entries = scraper.fetch_paper_list(&client, 2024).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].title, "Paper 2024");
+    }
+
+    #[tokio::test]
+    async fn fetch_paper_list_uses_sparql_first() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = r#"{"head": {"vars": ["paper", "title", "doc", "ord", "name"]},
+            "results": {"bindings": [
+              {"paper": {"type": "uri", "value": "https://dblp.org/rec/conf/sp/X26"},
+               "title": {"type": "literal", "value": "SPARQL Paper."},
+               "doc": {"type": "uri", "value": "https://doi.org/10.1/x"},
+               "ord": {"type": "literal", "value": "1"},
+               "name": {"type": "literal", "value": "Xavier"}}
+            ]}, "meta": {"result-size-total": 1}}"#;
+        Mock::given(method("GET"))
+            .and(path("/sparql"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let scraper = DblpScraper::new("sp", "IEEE S&P", "sp", 1981, 2026)
+            .with_interval(Duration::ZERO)
+            .with_sparql_endpoint(&format!("{}/sparql", server.uri()));
+        let client = reqwest::Client::new();
+        let entries = scraper.fetch_paper_list(&client, 2026).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "SPARQL Paper");
+        assert_eq!(entries[0].authors, vec!["Xavier"]);
+
+        let paper = scraper
+            .fetch_paper_detail(&client, &entries[0])
+            .await
+            .unwrap();
+        assert_eq!(paper.url, "https://doi.org/10.1/x");
+        assert_eq!(paper.year, 2026);
     }
 }

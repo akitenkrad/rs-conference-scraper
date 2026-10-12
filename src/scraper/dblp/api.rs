@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 
 use crate::scraper::fetch_with_sleep;
-use crate::types::{compute_id, Paper};
+use crate::types::{Paper, compute_id};
 
 // ---------------------------------------------------------------------------
 // DBLP Search API レスポンス型
@@ -119,11 +119,55 @@ pub(super) fn compute_hash(title: &str, abstract_text: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Search API の JSON は XML の実体参照（`&apos;` `&quot;` `&amp;` など）を残したまま返す．
+/// SPARQL・XML の経路は復号済みの文字を返すので，ここで揃えないと同じ論文が別の ID で入る．
+/// 1 回だけ復号する（`&amp;amp;` は `&amp;` になる）．知らない参照はそのまま残す．
+pub(super) fn decode_entities(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find('&') {
+        out.push_str(&rest[..pos]);
+        let tail = &rest[pos..];
+        let decoded = tail.find(';').filter(|&end| end <= 10).and_then(|end| {
+            let ch = match &tail[1..end] {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                name => {
+                    let num = name.strip_prefix('#')?;
+                    let code = match num.strip_prefix(['x', 'X']) {
+                        Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                        None => num.parse().ok()?,
+                    };
+                    char::from_u32(code)
+                }
+            }?;
+            Some((ch, end + 1))
+        });
+        match decoded {
+            Some((ch, len)) => {
+                out.push(ch);
+                rest = &tail[len..];
+            }
+            None => {
+                out.push('&');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// `AuthorField` から著者名のベクタを取得
 fn extract_authors(field: &AuthorField) -> Vec<String> {
     match field {
-        AuthorField::Multiple(authors) => authors.iter().map(|a| a.text.clone()).collect(),
-        AuthorField::Single(author) => vec![author.text.clone()],
+        AuthorField::Multiple(authors) => {
+            authors.iter().map(|a| decode_entities(&a.text)).collect()
+        }
+        AuthorField::Single(author) => vec![decode_entities(&author.text)],
     }
 }
 
@@ -138,7 +182,7 @@ fn hit_to_paper(hit: &DblpHit, conf_id: &str) -> Option<Paper> {
     }
 
     let raw_title = info.title.as_deref().unwrap_or("");
-    let title = clean_title(raw_title);
+    let title = clean_title(&decode_entities(raw_title));
     if title.is_empty() {
         return None;
     }
@@ -203,7 +247,12 @@ pub async fn fetch_all_papers(
         let resp: DblpResponse = serde_json::from_str(&body)?;
 
         let total: u64 = resp.result.hits.total.parse().unwrap_or(0);
-        let hits = resp.result.hits.hit.map(|h| h.into_vec()).unwrap_or_default();
+        let hits = resp
+            .result
+            .hits
+            .hit
+            .map(|h| h.into_vec())
+            .unwrap_or_default();
         let page_len = hits.len() as u64;
 
         for hit in &hits {
@@ -244,7 +293,12 @@ pub async fn fetch_papers_for_year(
         let resp: DblpResponse = serde_json::from_str(&body)?;
 
         let total: u64 = resp.result.hits.total.parse().unwrap_or(0);
-        let hits = resp.result.hits.hit.map(|h| h.into_vec()).unwrap_or_default();
+        let hits = resp
+            .result
+            .hits
+            .hit
+            .map(|h| h.into_vec())
+            .unwrap_or_default();
         let page_len = hits.len() as u64;
 
         for hit in &hits {
@@ -323,10 +377,7 @@ mod tests {
         let hits = resp.result.hits.hit.unwrap().into_vec();
         assert_eq!(hits.len(), 2);
 
-        let papers: Vec<Paper> = hits
-            .iter()
-            .filter_map(|h| hit_to_paper(h, "sp"))
-            .collect();
+        let papers: Vec<Paper> = hits.iter().filter_map(|h| hit_to_paper(h, "sp")).collect();
         assert_eq!(papers.len(), 2);
 
         // 1つ目の論文
@@ -334,10 +385,7 @@ mod tests {
         assert_eq!(papers[0].conference, "sp");
         assert_eq!(papers[0].year, 2024);
         assert_eq!(papers[0].authors, vec!["Alice Smith", "Bob Jones"]);
-        assert_eq!(
-            papers[0].url,
-            "https://doi.org/10.1109/SP.2024.001"
-        );
+        assert_eq!(papers[0].url, "https://doi.org/10.1109/SP.2024.001");
         assert!(papers[0].pdf_url.is_none());
         assert!(papers[0].r#abstract.is_empty());
         assert_eq!(papers[0].id, compute_id("Secure Multi-Party Computation"));
@@ -378,10 +426,7 @@ mod tests {
 
         let resp: DblpResponse = serde_json::from_str(json).unwrap();
         let hits = resp.result.hits.hit.unwrap().into_vec();
-        let papers: Vec<Paper> = hits
-            .iter()
-            .filter_map(|h| hit_to_paper(h, "ccs"))
-            .collect();
+        let papers: Vec<Paper> = hits.iter().filter_map(|h| hit_to_paper(h, "ccs")).collect();
 
         assert_eq!(papers.len(), 1);
         assert_eq!(papers[0].title, "Solo Research Paper");
@@ -406,11 +451,15 @@ mod tests {
 
         let resp: DblpResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.result.hits.total, "4523");
-        assert_eq!(
-            resp.result.hits.total.parse::<u64>().unwrap(),
-            4523
+        assert_eq!(resp.result.hits.total.parse::<u64>().unwrap(), 4523);
+        assert!(
+            resp.result
+                .hits
+                .hit
+                .map(|h| h.into_vec())
+                .unwrap_or_default()
+                .is_empty()
         );
-        assert!(resp.result.hits.hit.map(|h| h.into_vec()).unwrap_or_default().is_empty());
     }
 
     #[test]
@@ -419,6 +468,22 @@ mod tests {
         assert_eq!(clean_title("Paper Title"), "Paper Title");
         assert_eq!(clean_title("Title..."), "Title");
         assert_eq!(clean_title("  Title.  "), "Title");
+    }
+
+    #[test]
+    fn decode_entities_matches_sparql_text() {
+        assert_eq!(
+            decode_entities("&apos;Oh LLM, I&apos;m&apos;: &quot;Q&amp;A&quot; &lt;x&gt;"),
+            "'Oh LLM, I'm': \"Q&A\" <x>"
+        );
+        assert_eq!(decode_entities("&#39;&#x27;&#X41;"), "''A");
+        // 1 回だけ復号する．知らない参照・閉じていない & はそのまま
+        assert_eq!(decode_entities("&amp;amp;"), "&amp;");
+        assert_eq!(
+            decode_entities("R&D; a & b &nbsp; &#xZZ; &"),
+            "R&D; a & b &nbsp; &#xZZ; &"
+        );
+        assert_eq!(decode_entities("日本語 &amp; 混在"), "日本語 & 混在");
     }
 
     #[test]
@@ -450,10 +515,7 @@ mod tests {
 
         let resp: DblpResponse = serde_json::from_str(json).unwrap();
         let hits = resp.result.hits.hit.unwrap().into_vec();
-        let papers: Vec<Paper> = hits
-            .iter()
-            .filter_map(|h| hit_to_paper(h, "sp"))
-            .collect();
+        let papers: Vec<Paper> = hits.iter().filter_map(|h| hit_to_paper(h, "sp")).collect();
 
         assert!(papers.is_empty());
     }
@@ -471,8 +533,12 @@ mod tests {
     #[test]
     fn test_extract_authors_multiple() {
         let field = AuthorField::Multiple(vec![
-            DblpAuthor { text: "Alice".to_string() },
-            DblpAuthor { text: "Bob".to_string() },
+            DblpAuthor {
+                text: "Alice".to_string(),
+            },
+            DblpAuthor {
+                text: "Bob".to_string(),
+            },
         ]);
         assert_eq!(extract_authors(&field), vec!["Alice", "Bob"]);
     }
@@ -548,10 +614,7 @@ mod tests {
         let resp: DblpResponse = serde_json::from_str(json).unwrap();
         let hits = resp.result.hits.hit.unwrap().into_vec();
         assert_eq!(hits.len(), 1);
-        let papers: Vec<Paper> = hits
-            .iter()
-            .filter_map(|h| hit_to_paper(h, "sp"))
-            .collect();
+        let papers: Vec<Paper> = hits.iter().filter_map(|h| hit_to_paper(h, "sp")).collect();
         assert_eq!(papers.len(), 1);
         assert_eq!(papers[0].title, "Only Paper");
     }

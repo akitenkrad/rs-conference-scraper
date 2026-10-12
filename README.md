@@ -76,7 +76,7 @@ conf-scraper sync --conference acl --year 2023-2024 --jobs 8
 # Sync CRYPTO 2020-2024 (abstracts included via CryptoDB API)
 conf-scraper sync --conference crypto --year 2020-2024
 
-# Sync IEEE S&P 2024 (via DBLP API, no abstracts)
+# Sync IEEE S&P 2024 (via the DBLP SPARQL endpoint, no abstracts)
 conf-scraper sync --conference sp --year 2024
 
 # Sync Journal of Mathematical Sociology 2020-2024 (via OpenAlex API)
@@ -204,7 +204,7 @@ bash tools/weekly_sync.sh   # e.g. from a weekly launchd agent
 | AAMAS | ifaamas.org | HTML scrape | No |
 | CRYPTO, EUROCRYPT, ASIACRYPT | CryptoDB API (iacr.org) | JSON API | Yes |
 | IACR ePrint | eprint.iacr.org | HTML scrape | Yes |
-| IEEE S&P, CCS, DSN, RAID, ESORICS, DIMVA, ACSAC, CNS, INFOCOM, SIGCOMM, IMC, KDD, ICDM, WSC | DBLP Search API (dblp.org) | JSON API | No |
+| IEEE S&P, CCS, DSN, RAID, ESORICS, DIMVA, ACSAC, CNS, INFOCOM, SIGCOMM, IMC, KDD, ICDM, WSC | DBLP SPARQL endpoint (sparql.dblp.org); Search API and XML as fallbacks | SPARQL (JSON results) | No |
 | JASSS | jasss.org | HTML scrape | Yes |
 | J. Math. Sociol., Simulation & Gaming | OpenAlex API (api.openalex.org) | JSON API (ISSN filter) | Partial |
 | TJSAI, IPSJ-JNL, IEICE-D, JASAG SG | CiNii Research API (cir.nii.ac.jp) | JSON-LD API (ISSN filter, requires `CINII_APPID`) | Partial (license-gated) |
