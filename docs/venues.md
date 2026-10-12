@@ -62,7 +62,7 @@ Years run up to the current year. Asking for an edition that has not been publis
 |--------|--------|--------|-----------|
 | ACL, EMNLP, NAACL, COLING, EACL, AACL, LREC, CoNLL, SemEval, SIGDIAL, IJCNLP, WMT | ACL Anthology (GitHub XML) | XML parse | Yes |
 | NeurIPS | papers.nips.cc | HTML scrape (2-pass) | Yes |
-| ICLR | OpenReview API (v1/v2) | REST API | Yes |
+| ICLR | OpenReview API (v1/v2) | REST API (requires an OpenReview account) | Yes |
 | ICML | proceedings.mlr.press | HTML scrape (2-pass) | Yes |
 | CVPR, ICCV | openaccess.thecvf.com | HTML scrape (2-pass) | Yes |
 | USENIX Security | usenix.org | HTML scrape (10 s crawl delay) | Yes |
@@ -98,6 +98,11 @@ Venues marked **No** or **Partial** can be completed with [`enrich`](cli.md#enri
 - Papers come from DBLP. Abstracts are taken from the ePrint harvest when the normalized title (lowercase, letters and digits only) matches. In recent years 83–91% of papers get an abstract; papers from before ePrint started (1996) generally have none.
 - If the ePrint harvest is unavailable, the year fails instead of being stored without abstracts, so the next `--incremental` run fills it in.
 - The CryptoDB API on iacr.org is not used: iacr.org's robots.txt disallows `/cryptodb/data`.
+
+### OpenReview (ICLR)
+
+- Requires an OpenReview account: set `OPENREVIEW_TOKEN`, or `OPENREVIEW_USERNAME` and `OPENREVIEW_PASSWORD` (see [CLI reference](cli.md#environment-variables)). Since October 2026, OpenReview asks anonymous API clients for a browser check; signed-in requests are not challenged.
+- The category (`oral`, `spotlight`, `poster`) comes from each paper's venue string, so `filter --tags oral` works for ICLR.
 
 ### CiNii Research
 

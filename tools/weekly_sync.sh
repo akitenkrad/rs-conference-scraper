@@ -16,6 +16,9 @@ BIN="${CONF_SCRAPER_BIN:-$HOME/.cargo/bin/conf-scraper}"
 LOCK_DIR="$HOME/.cache/conf-scraper/.weekly-sync.lock"
 # CiNii venues need CINII_APPID; without it the whole sync aborts at scraper construction.
 CINII_VENUES="tjsai ipsj-jnl ieice-d jasag-sng"
+# OpenReview challenges anonymous API clients, so ICLR needs OPENREVIEW_TOKEN or
+# OPENREVIEW_USERNAME + OPENREVIEW_PASSWORD; without them every ICLR year fails.
+OPENREVIEW_VENUES="iclr"
 
 log() { echo "$(date '+%F %T') $*"; }
 
@@ -39,22 +42,36 @@ fi
 echo $$ > "$LOCK_DIR/pid"
 trap 'rm -rf "$LOCK_DIR"' EXIT
 
-# --- CINII_APPID (launchd does not read ~/.zshrc) ---------------------------------------
-if [ -z "${CINII_APPID:-}" ] && [ -f "$HOME/.zshrc" ]; then
-  CINII_APPID=$(sed -n 's/^[[:space:]]*export[[:space:]]\{1,\}CINII_APPID=//p' "$HOME/.zshrc" | tail -1 | sed "s/^[\"']//; s/[\"']$//")
-  export CINII_APPID
-fi
+# --- credentials (launchd does not read ~/.zshrc) ---------------------------------------
+# Take `export NAME=value` from ~/.zshrc when NAME is not already set.
+load_from_zshrc() {
+  local name=$1 value
+  [ -n "${!name:-}" ] && return
+  [ -f "$HOME/.zshrc" ] || return
+  value=$(sed -n "s/^[[:space:]]*export[[:space:]]\{1,\}$name=//p" "$HOME/.zshrc" | tail -1 | sed "s/^[\"']//; s/[\"']$//")
+  [ -n "$value" ] && export "$name=$value"
+}
+for name in CINII_APPID OPENREVIEW_TOKEN OPENREVIEW_USERNAME OPENREVIEW_PASSWORD; do
+  load_from_zshrc "$name"
+done
 
 # --- targets -------------------------------------------------------------------------
 venues=$("$BIN" query catalog | /usr/bin/python3 -c 'import json,sys; print(",".join(v["id"] for v in json.load(sys.stdin)["venues"]))') || {
   log "ERROR: failed to read the venue catalog"
   exit 1
 }
-if [ -z "${CINII_APPID:-}" ]; then
-  log "WARN: CINII_APPID is not set; skipping CiNii venues ($CINII_VENUES)"
-  for v in $CINII_VENUES; do
+drop_venues() {
+  for v in "$@"; do
     venues=$(echo ",$venues," | sed "s/,$v,/,/; s/^,//; s/,$//")
   done
+}
+if [ -z "${CINII_APPID:-}" ]; then
+  log "WARN: CINII_APPID is not set; skipping CiNii venues ($CINII_VENUES)"
+  drop_venues $CINII_VENUES
+fi
+if [ -z "${OPENREVIEW_TOKEN:-}" ] && { [ -z "${OPENREVIEW_USERNAME:-}" ] || [ -z "${OPENREVIEW_PASSWORD:-}" ]; }; then
+  log "WARN: OpenReview credentials are not set; skipping OpenReview venues ($OPENREVIEW_VENUES)"
+  drop_venues $OPENREVIEW_VENUES
 fi
 
 this_year=$(date +%Y)

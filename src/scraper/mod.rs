@@ -189,12 +189,41 @@ pub(crate) async fn fetch_with_policy(
     interval: Duration,
     policy: &RetryPolicy,
 ) -> Result<String> {
+    fetch_inner(client, url, interval, policy, None).await
+}
+
+/// `fetch_with_sleep` と同じ再試行方針で，`Authorization: Bearer` を付けて JSON を取る．
+///
+/// `bearer` が `None` なら認証ヘッダを付けない（匿名の問い合わせ）．
+/// トークンはログにもエラーにも出さない．
+pub(crate) async fn fetch_with_bearer(
+    client: &reqwest::Client,
+    url: &str,
+    interval: Duration,
+    bearer: Option<&str>,
+) -> Result<String> {
+    fetch_inner(client, url, interval, &RetryPolicy::standard(3), bearer).await
+}
+
+async fn fetch_inner(
+    client: &reqwest::Client,
+    url: &str,
+    interval: Duration,
+    policy: &RetryPolicy,
+    bearer: Option<&str>,
+) -> Result<String> {
     let safe_url = redact_url(url);
     tracing::debug!("GET {}", safe_url);
     let mut failures: u32 = 0;
     let mut throttles: u32 = 0;
     loop {
-        let err: anyhow::Error = match client.get(url).send().await {
+        let mut req = client.get(url);
+        if let Some(token) = bearer {
+            req = req
+                .bearer_auth(token)
+                .header(reqwest::header::ACCEPT, "application/json");
+        }
+        let err: anyhow::Error = match req.send().await {
             Ok(resp) => {
                 let status = resp.status();
                 let retry_after = parse_retry_after(resp.headers());

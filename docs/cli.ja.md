@@ -88,7 +88,7 @@ conf-scraper sync --conference emnlp --year 2020-2024 --incremental
 
 - HTTP 429（または `Retry-After` 付きの 503）を受けたら，`Retry-After` の秒数だけ待ちます．ヘッダが無ければ 15，30，60，120，120 秒と待ち，再試行は最大 5 回です．
 - それ以外の失敗は 2，4，8 秒と待って再試行します．
-- ボットの確認画面（Cloudflare，Anubis）は `blocked by bot challenge` として報告し，再試行しません．
+- ボットの確認画面（Cloudflare，Anubis，OpenReview）は `blocked by bot challenge` として報告し，再試行しません．
 - 論文をまとめて 1 回で返す取得元（DBLP，ePrint）は，論文ごとではなく問い合わせごとに間隔をあけます．
 
 ## filter
@@ -251,5 +251,9 @@ conf-scraper cache clear  # すべて消す
 | 変数 | 必要な学会・コマンド | 用途 |
 |------|---------------------|------|
 | `CINII_APPID` | `tjsai`，`ipsj-jnl`，`ieice-d`，`jasag-sng` | CiNii Research API のキー．<https://support.nii.ac.jp/ja/cir/r_opensearch> で取得する |
+| `OPENREVIEW_TOKEN` | `iclr` | OpenReview API のトークン．`Authorization: Bearer` として送る．下の 2 つより優先する |
+| `OPENREVIEW_USERNAME`，`OPENREVIEW_PASSWORD` | `iclr` | OpenReview のアカウント．1 回の実行につき 1 回だけログインし，得たトークンを使い回す |
+
+OpenReview は匿名の API 利用者にブラウザの確認を求めるため，ICLR には `OPENREVIEW_TOKEN`，または `OPENREVIEW_USERNAME` と `OPENREVIEW_PASSWORD` の両方が必要です．設定が無いと，ICLR の各年は設定すべき変数を示すメッセージとともに失敗します．トークンとパスワードは，ログにもエラーメッセージにも出しません．
 
 `-v` のデバッグログでは，秘密にすべき問い合わせパラメータの値（`appid`，`api_key`，`token`，`apikey`，`key`）を `***` に置き換えて出します．

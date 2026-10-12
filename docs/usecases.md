@@ -78,7 +78,8 @@ bash tools/weekly_sync.sh
 The script:
 
 - refuses to start while another run holds its lock
-- reads `CINII_APPID` from `~/.zshrc` when it is not set in the environment (schedulers such as launchd do not load shell profiles), and skips the CiNii venues if it is still missing
+- reads `CINII_APPID`, `OPENREVIEW_TOKEN`, `OPENREVIEW_USERNAME` and `OPENREVIEW_PASSWORD` from `~/.zshrc` when they are not set in the environment (schedulers such as launchd do not load shell profiles)
+- skips the CiNii venues when `CINII_APPID` is still missing, and ICLR when there are no OpenReview credentials
 - uses `$CONF_SCRAPER_BIN` when set, otherwise `~/.cargo/bin/conf-scraper`
 - exits with the status of `sync`, so a run that left years incomplete shows up as a failure in the scheduler
 

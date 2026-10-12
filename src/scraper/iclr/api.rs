@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
 
+use super::auth::{SIGN_IN_HINT, Session};
 use crate::types::{Paper, compute_id};
 
 // ---------------------------------------------------------------------------
@@ -186,20 +187,49 @@ fn build_pdf_url(pdf_path: Option<&str>) -> Option<String> {
 /// 指定されたICLR年度のすべての採択論文をOpenReview APIから取得する．
 pub async fn fetch_papers_for_year(
     client: &reqwest::Client,
+    session: &Session,
     year: u16,
     interval: Duration,
 ) -> Result<Vec<Paper>> {
-    match year {
-        2018 => fetch_v1_legacy_2018(client, interval).await,
-        2019 => fetch_v1_legacy_2019(client, interval).await,
-        2020..=2023 => fetch_v1(client, API_V1_BASE, year, interval).await,
-        2024.. => fetch_v2(client, API_V2_BASE, year, interval).await,
+    let result = match year {
+        2018 => fetch_v1_legacy_2018(client, session, API_V1_BASE, interval).await,
+        2019 => fetch_v1_legacy_2019(client, session, API_V1_BASE, interval).await,
+        2020..=2023 => fetch_v1(client, session, API_V1_BASE, year, interval).await,
+        2024.. => fetch_v2(client, session, API_V2_BASE, year, interval).await,
         _ => bail!("ICLR scraping for year {} is not supported", year),
+    };
+    with_sign_in_hint(result, session)
+}
+
+/// 匿名で確認画面に当たったときだけ，ログインの設定を促す一文を添える．
+fn with_sign_in_hint<T>(result: Result<T>, session: &Session) -> Result<T> {
+    match result {
+        Err(e) if session.is_anonymous() && format!("{:#}", e).contains("bot challenge") => {
+            Err(e.context(SIGN_IN_HINT))
+        }
+        other => other,
     }
 }
 
+/// OpenReview の API を 1 回叩く．ログインしていればトークンを付ける．
+async fn get(
+    client: &reqwest::Client,
+    session: &Session,
+    base: &str,
+    url: &str,
+    interval: Duration,
+) -> Result<String> {
+    let bearer = session.bearer(client, base).await?;
+    crate::scraper::fetch_with_bearer(client, url, interval, bearer.as_deref()).await
+}
+
 /// ICLR 2018の採択論文を取得する．決定ノートと投稿を別々に取得し，マッチングする．
-async fn fetch_v1_legacy_2018(client: &reqwest::Client, interval: Duration) -> Result<Vec<Paper>> {
+async fn fetch_v1_legacy_2018(
+    client: &reqwest::Client,
+    session: &Session,
+    base: &str,
+    interval: Duration,
+) -> Result<Vec<Paper>> {
     // Step 1: Fetch all decision notes
     let mut decisions: HashMap<String, String> = HashMap::new();
     let mut offset: u64 = 0;
@@ -207,11 +237,11 @@ async fn fetch_v1_legacy_2018(client: &reqwest::Client, interval: Duration) -> R
     loop {
         let url = format!(
             "{}/notes?invitation=ICLR.cc/2018/Conference/-/Acceptance_Decision&limit={}&offset={}",
-            API_V1_BASE, PAGE_LIMIT, offset
+            base, PAGE_LIMIT, offset
         );
         tracing::debug!("GET {}", url);
 
-        let resp = crate::scraper::fetch_with_sleep(client, &url, interval).await?;
+        let resp = get(client, session, base, &url, interval).await?;
         let body: DecisionResponse = serde_json::from_str(&resp)?;
 
         let total = body.count.unwrap_or(0);
@@ -237,11 +267,11 @@ async fn fetch_v1_legacy_2018(client: &reqwest::Client, interval: Duration) -> R
     loop {
         let url = format!(
             "{}/notes?invitation=ICLR.cc/2018/Conference/-/Blind_Submission&limit={}&offset={}",
-            API_V1_BASE, PAGE_LIMIT, offset
+            base, PAGE_LIMIT, offset
         );
         tracing::debug!("GET {}", url);
 
-        let resp = crate::scraper::fetch_with_sleep(client, &url, interval).await?;
+        let resp = get(client, session, base, &url, interval).await?;
         let body: ApiResponseV1 = serde_json::from_str(&resp)?;
 
         let total = body.count.unwrap_or(0);
@@ -280,18 +310,23 @@ async fn fetch_v1_legacy_2018(client: &reqwest::Client, interval: Duration) -> R
 }
 
 /// ICLR 2019の採択論文を取得する．投稿のdirectRepliesからMeta_Reviewを探して判定する．
-async fn fetch_v1_legacy_2019(client: &reqwest::Client, interval: Duration) -> Result<Vec<Paper>> {
+async fn fetch_v1_legacy_2019(
+    client: &reqwest::Client,
+    session: &Session,
+    base: &str,
+    interval: Duration,
+) -> Result<Vec<Paper>> {
     let mut papers = Vec::new();
     let mut offset: u64 = 0;
 
     loop {
         let url = format!(
             "{}/notes?invitation=ICLR.cc/2019/Conference/-/Blind_Submission&details=directReplies&limit={}&offset={}",
-            API_V1_BASE, PAGE_LIMIT, offset
+            base, PAGE_LIMIT, offset
         );
         tracing::debug!("GET {}", url);
 
-        let resp = crate::scraper::fetch_with_sleep(client, &url, interval).await?;
+        let resp = get(client, session, base, &url, interval).await?;
         let body: ApiResponseV1WithDetails = serde_json::from_str(&resp)?;
 
         let total = body.count.unwrap_or(0);
@@ -334,8 +369,6 @@ async fn fetch_v1_legacy_2019(client: &reqwest::Client, interval: Duration) -> R
         if page_len == 0 || offset >= total {
             break;
         }
-
-        tokio::time::sleep(interval).await;
     }
 
     Ok(papers)
@@ -343,6 +376,7 @@ async fn fetch_v1_legacy_2019(client: &reqwest::Client, interval: Duration) -> R
 
 async fn fetch_v2(
     client: &reqwest::Client,
+    session: &Session,
     base: &str,
     year: u16,
     interval: Duration,
@@ -359,7 +393,7 @@ async fn fetch_v2(
         tracing::debug!("GET {}", url);
 
         // 429 の待機とボット確認画面の検出を通す（MYTASK-3422）．間隔もここであく
-        let resp = crate::scraper::fetch_with_sleep(client, &url, interval).await?;
+        let resp = get(client, session, base, &url, interval).await?;
         let body: ApiResponseV2 = serde_json::from_str(&resp)?;
 
         let total = body.count.unwrap_or(0);
@@ -399,6 +433,7 @@ async fn fetch_v2(
 
 async fn fetch_v1(
     client: &reqwest::Client,
+    session: &Session,
     base: &str,
     year: u16,
     interval: Duration,
@@ -415,7 +450,7 @@ async fn fetch_v1(
         tracing::debug!("GET {}", url);
 
         // 429 の待機とボット確認画面の検出を通す（MYTASK-3422）．間隔もここであく
-        let resp = crate::scraper::fetch_with_sleep(client, &url, interval).await?;
+        let resp = get(client, session, base, &url, interval).await?;
         let body: ApiResponseV1 = serde_json::from_str(&resp)?;
 
         let total = body.count.unwrap_or(0);
@@ -459,6 +494,7 @@ async fn fetch_v1(
 
 #[cfg(test)]
 mod tests {
+    use super::super::auth::Credentials;
     use super::*;
 
     /// 429（Retry-After あり）のあと成功する応答で，取り直して読めること（MYTASK-3422）
@@ -487,9 +523,15 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let papers = fetch_v2(&client, &server.uri(), 2024, Duration::ZERO)
-            .await
-            .unwrap();
+        let papers = fetch_v2(
+            &client,
+            &Session::new(Credentials::Anonymous),
+            &server.uri(),
+            2024,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
         assert_eq!(papers.len(), 1);
         assert_eq!(papers[0].title, "A Great Paper");
         assert_eq!(papers[0].r#abstract, "Great.");
@@ -512,14 +554,137 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let err = fetch_v1(&client, &server.uri(), 2022, Duration::ZERO)
-            .await
-            .unwrap_err();
+        let err = fetch_v1(
+            &client,
+            &Session::new(Credentials::Anonymous),
+            &server.uri(),
+            2022,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap_err();
         assert!(
             format!("{:#}", err).contains("blocked by bot challenge"),
             "{:#}",
             err
         );
+    }
+
+    /// ログインしてトークンを得て，各ページの取得に Bearer を付けること（MYTASK-3426）
+    #[tokio::test]
+    async fn fetch_v2_signs_in_and_sends_bearer() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"token": "T1"}"#))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let page = |title: &str| {
+            format!(
+                r#"{{"notes": [{{"id": "x", "forum": "x", "content": {{
+                "title": {{"value": "{}"}}, "venue": {{"value": "ICLR 2026 Oral"}}}}}}],
+                "count": 2}}"#,
+                title
+            )
+        };
+        Mock::given(method("GET"))
+            .and(path("/notes"))
+            .and(header("authorization", "Bearer T1"))
+            .and(wiremock::matchers::query_param("offset", "0"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(page("First")))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/notes"))
+            .and(header("authorization", "Bearer T1"))
+            .and(wiremock::matchers::query_param("offset", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(page("Second")))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let session = Session::new(Credentials::Login {
+            username: "u".into(),
+            password: "p".into(),
+        });
+        let papers = fetch_v2(
+            &reqwest::Client::new(),
+            &session,
+            &server.uri(),
+            2026,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        let titles: Vec<_> = papers.iter().map(|p| p.title.as_str()).collect();
+        assert_eq!(titles, ["First", "Second"]);
+        assert_eq!(papers[0].categories, ["oral"]);
+    }
+
+    /// トークン直指定ならログインせず，そのトークンを付けること
+    #[tokio::test]
+    async fn fetch_v1_uses_the_given_token() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/login"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/notes"))
+            .and(header("authorization", "Bearer TOKEN-X"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"notes": [{"id": "a", "forum": "a", "content": {"title": "Old Paper",
+                "venue": "ICLR 2022 Poster"}}], "count": 1}"#,
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let session = Session::new(Credentials::Token("TOKEN-X".into()));
+        let papers = fetch_v1(
+            &reqwest::Client::new(),
+            &session,
+            &server.uri(),
+            2022,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        assert_eq!(papers.len(), 1);
+    }
+
+    /// 匿名で確認画面に当たったら，ログインの設定を促す．ログイン済みなら促さない
+    #[test]
+    fn sign_in_hint_only_for_anonymous_challenges() {
+        let challenge = || -> Result<()> {
+            Err(anyhow::anyhow!(
+                "blocked by bot challenge (OpenReview, HTTP 403) at x"
+            ))
+        };
+        let anon = Session::new(Credentials::Anonymous);
+        let msg = format!("{:#}", with_sign_in_hint(challenge(), &anon).unwrap_err());
+        assert!(msg.contains("OPENREVIEW_USERNAME"), "{}", msg);
+        assert!(msg.contains("blocked by bot challenge"), "{}", msg);
+
+        let signed_in = Session::new(Credentials::Token("t".into()));
+        let msg = format!(
+            "{:#}",
+            with_sign_in_hint(challenge(), &signed_in).unwrap_err()
+        );
+        assert!(!msg.contains("OPENREVIEW_USERNAME"), "{}", msg);
+
+        let other = with_sign_in_hint::<()>(Err(anyhow::anyhow!("HTTP 500 at x")), &anon);
+        assert!(!format!("{:#}", other.unwrap_err()).contains("OPENREVIEW"));
     }
 
     #[test]

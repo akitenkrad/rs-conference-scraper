@@ -74,7 +74,7 @@ conf-scraper sync --conference emnlp --year 2020-2024 --incremental
 - the source rate-limited the requests
 - the source answered with a bot-challenge page
 
-**Rate limits and challenges.** Requests to the same source are spaced by `--interval`. On HTTP 429 (or 503 with `Retry-After`), a request waits as the `Retry-After` header says, or 15, 30, 60, 120, 120 s when it is missing, for at most 5 retries. Other failures back off 2, 4, 8 s. Bot-challenge pages (Cloudflare, Anubis) are reported as `blocked by bot challenge` and are not retried. Sources whose papers all come from one bulk response (DBLP, ePrint) are not throttled per paper, only per request.
+**Rate limits and challenges.** Requests to the same source are spaced by `--interval`. On HTTP 429 (or 503 with `Retry-After`), a request waits as the `Retry-After` header says, or 15, 30, 60, 120, 120 s when it is missing, for at most 5 retries. Other failures back off 2, 4, 8 s. Bot-challenge pages (Cloudflare, Anubis, OpenReview) are reported as `blocked by bot challenge` and are not retried. Sources whose papers all come from one bulk response (DBLP, ePrint) are not throttled per paper, only per request.
 
 ## filter
 
@@ -229,5 +229,9 @@ conf-scraper cache clear  # clear all
 | Variable | Required for | Purpose |
 |----------|--------------|---------|
 | `CINII_APPID` | `tjsai`, `ipsj-jnl`, `ieice-d`, `jasag-sng` | CiNii Research API key. Get one at <https://support.nii.ac.jp/ja/cir/r_opensearch>. |
+| `OPENREVIEW_TOKEN` | `iclr` | OpenReview API token, sent as `Authorization: Bearer`. Takes precedence over the two below. |
+| `OPENREVIEW_USERNAME`, `OPENREVIEW_PASSWORD` | `iclr` | OpenReview account. `conf-scraper` signs in once per run and reuses the token. |
+
+OpenReview asks anonymous API clients for a browser check, so ICLR needs either `OPENREVIEW_TOKEN` or both `OPENREVIEW_USERNAME` and `OPENREVIEW_PASSWORD`. Without them, ICLR years fail with a message saying which variables to set. Tokens and passwords are never written to logs or error messages.
 
 Sensitive query parameter values (`appid`, `api_key`, `token`, `apikey`, `key`) are redacted to `***` in `-v` debug logs.

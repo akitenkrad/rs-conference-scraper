@@ -92,7 +92,8 @@ bash tools/weekly_sync.sh
 このスクリプトの動作は次のとおりです．
 
 - 別の実行がロックを持っている間は起動しません．
-- `CINII_APPID` が環境変数に無ければ `~/.zshrc` から読みます．launchd などのスケジューラはシェルの設定を読まないためです．それでも無ければ，CiNii の学会を飛ばします．
+- `CINII_APPID`，`OPENREVIEW_TOKEN`，`OPENREVIEW_USERNAME`，`OPENREVIEW_PASSWORD` が環境変数に無ければ `~/.zshrc` から読みます．launchd などのスケジューラはシェルの設定を読まないためです．
+- それでも `CINII_APPID` が無ければ CiNii の学会を，OpenReview の資格情報が無ければ ICLR を飛ばします．
 - `$CONF_SCRAPER_BIN` があればそれを使い，無ければ `~/.cargo/bin/conf-scraper` を使います．
 - 終了コードは `sync` のものをそのまま返します．取り残した年がある実行は，スケジューラ側で失敗として見えます．
 

@@ -1,4 +1,5 @@
 pub mod api;
+pub mod auth;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -14,6 +15,7 @@ const DEFAULT_INTERVAL: Duration = Duration::from_millis(1500);
 
 pub struct IclrScraper {
     interval: Duration,
+    session: Arc<auth::Session>,
     paper_cache: Arc<RwLock<HashMap<String, Paper>>>,
 }
 
@@ -21,6 +23,7 @@ impl IclrScraper {
     pub fn new() -> Self {
         Self {
             interval: DEFAULT_INTERVAL,
+            session: Arc::new(auth::Session::from_env()),
             paper_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -54,7 +57,7 @@ impl ConferenceScraper for IclrScraper {
         client: &reqwest::Client,
         year: u16,
     ) -> Result<Vec<PaperListEntry>> {
-        let papers = api::fetch_papers_for_year(client, year, self.interval).await?;
+        let papers = api::fetch_papers_for_year(client, &self.session, year, self.interval).await?;
 
         let mut entries = Vec::with_capacity(papers.len());
         let mut cache = self.paper_cache.write().await;

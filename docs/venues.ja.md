@@ -62,7 +62,7 @@
 |-------------|--------|------|---------------|
 | ACL，EMNLP，NAACL，COLING，EACL，AACL，LREC，CoNLL，SemEval，SIGDIAL，IJCNLP，WMT | ACL Anthology（GitHub の XML） | XML の解析 | あり |
 | NeurIPS | papers.nips.cc | HTML の取得（2 段階） | あり |
-| ICLR | OpenReview API（v1/v2） | REST API | あり |
+| ICLR | OpenReview API（v1/v2） | REST API（OpenReview のアカウントが必要） | あり |
 | ICML | proceedings.mlr.press | HTML の取得（2 段階） | あり |
 | CVPR，ICCV | openaccess.thecvf.com | HTML の取得（2 段階） | あり |
 | USENIX Security | usenix.org | HTML の取得（10 秒間隔） | あり |
@@ -103,6 +103,11 @@
     - 近年の論文は 83〜91% にアブストラクトが付きます．ePrint が始まった 1996 年より前の論文には，ほぼ付きません．
 - **ePrint を取れなかったとき**：アブストラクト無しのまま保存せず，その年を失敗にします．次の `--incremental` で埋まります．
 - **CryptoDB は使いません**：iacr.org の robots.txt が `/cryptodb/data` を禁止しているためです．
+
+### OpenReview（ICLR）
+
+- OpenReview のアカウントが必要です．`OPENREVIEW_TOKEN`，または `OPENREVIEW_USERNAME` と `OPENREVIEW_PASSWORD` を設定します（[CLI リファレンス](cli.ja.md#環境変数)）．2026 年 10 月から，OpenReview は匿名の API 利用者にブラウザの確認を求めるようになりました．ログインした問い合わせには求めません．
+- 区分（`oral`，`spotlight`，`poster`）は各論文の venue の文字列から取るので，ICLR では `filter --tags oral` が使えます．
 
 ### CiNii Research
 
