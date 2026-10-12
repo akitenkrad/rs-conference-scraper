@@ -73,7 +73,7 @@ conf-scraper sync --conference neurips --year 2024
 # Sync ACL 2023-2024 with 8 parallel jobs
 conf-scraper sync --conference acl --year 2023-2024 --jobs 8
 
-# Sync CRYPTO 2020-2024 (abstracts included via CryptoDB API)
+# Sync CRYPTO 2020-2024 (DBLP; abstracts matched from ePrint by title)
 conf-scraper sync --conference crypto --year 2020-2024
 
 # Sync IEEE S&P 2024 (via the DBLP SPARQL endpoint, no abstracts)
@@ -202,8 +202,8 @@ bash tools/weekly_sync.sh   # e.g. from a weekly launchd agent
 | USENIX Security | usenix.org | HTML scrape (10s crawl delay) | Yes |
 | NDSS | ndss-symposium.org | HTML scrape (2-pass) | Yes |
 | AAMAS | ifaamas.org | HTML scrape | No |
-| CRYPTO, EUROCRYPT, ASIACRYPT | CryptoDB API (iacr.org) | JSON API | Yes |
-| IACR ePrint | eprint.iacr.org | HTML scrape | Yes |
+| CRYPTO, EUROCRYPT, ASIACRYPT | DBLP SPARQL endpoint; abstracts from the ePrint OAI-PMH feed, matched by title | SPARQL + OAI-PMH | Partial (papers also posted to ePrint) |
+| IACR ePrint | eprint.iacr.org OAI-PMH (CC0 metadata) | OAI-PMH bulk harvest (~60 requests for the whole archive) | Yes |
 | IEEE S&P, CCS, DSN, RAID, ESORICS, DIMVA, ACSAC, CNS, INFOCOM, SIGCOMM, IMC, KDD, ICDM, WSC | DBLP SPARQL endpoint (sparql.dblp.org); Search API and XML as fallbacks | SPARQL (JSON results) | No |
 | JASSS | jasss.org | HTML scrape | Yes |
 | J. Math. Sociol., Simulation & Gaming | OpenAlex API (api.openalex.org) | JSON API (ISSN filter) | Partial |

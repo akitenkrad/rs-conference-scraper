@@ -265,8 +265,11 @@ async fn run_sync_single(
                 let scraper = Arc::clone(&scraper);
                 let limiter = rate_limiter.clone();
 
+                let local = scraper.details_are_local();
                 let handle = tokio::spawn(async move {
-                    limiter.acquire().await;
+                    if !local {
+                        limiter.acquire().await;
+                    }
                     let result = scraper.fetch_paper_detail(&client, &entry).await;
                     drop(permit);
                     result

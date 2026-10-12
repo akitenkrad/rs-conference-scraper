@@ -35,7 +35,6 @@ pub(crate) fn redact_url(url: &str) -> String {
 pub mod aamas;
 pub mod acl;
 pub mod cinii;
-pub mod cryptodb;
 pub mod cvf;
 pub mod dblp;
 pub mod eprint;

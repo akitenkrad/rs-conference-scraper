@@ -32,6 +32,11 @@ pub trait ConferenceScraper: Send + Sync {
         client: &reqwest::Client,
         entry: &PaperListEntry,
     ) -> Result<Paper>;
+    /// `fetch_paper_detail` が通信せず手元のデータから返すか．
+    /// true なら sync は論文ごとの取得間隔の待ちを飛ばす（一覧の取得では従来どおり待つ）．
+    fn details_are_local(&self) -> bool {
+        false
+    }
 }
 
 /// 対応会議の一覧 (ID, 表示名, 分野)
@@ -161,16 +166,23 @@ pub fn get_scraper(
         "aamas" => Ok(Arc::new(
             crate::scraper::aamas::AamasScraper::new().with_interval(interval),
         )),
-        // CryptoDB API (IACR)
+        // IACR の会議 (DBLP)．アブストラクトは ePrint の OAI-PMH とタイトルで照合して補う（MYTASK-3420）．
+        // CryptoDB (iacr.org/cryptodb/data) は robots.txt で禁止されているので使わない．
         "crypto" | "eurocrypt" | "asiacrypt" => {
             let name = list_conferences()
                 .into_iter()
                 .find(|(cid, _, _)| *cid == id)
                 .map(|(_, name, _)| name)
                 .unwrap();
+            let start = match id {
+                "crypto" => 1981,
+                "eurocrypt" => 1985,
+                _ => 1991,
+            };
             Ok(Arc::new(
-                crate::scraper::cryptodb::CryptoDbScraper::new(id, name)
-                    .with_interval(interval),
+                crate::scraper::dblp::DblpScraper::new(id, name, id, start, current_year())
+                    .with_interval(interval)
+                    .with_eprint_abstracts(crate::scraper::eprint::EPRINT_BASE_URL),
             ))
         }
         // DBLP API

@@ -2,7 +2,7 @@ pub mod api;
 pub mod sparql;
 pub mod xml;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -24,6 +24,8 @@ pub struct DblpScraper {
     year_range: (u16, u16),
     interval: Duration,
     sparql_endpoint: String,
+    /// 設定されていれば，ePrint（この base URL）の OAI-PMH とタイトルで照合してアブストラクトを補う
+    eprint_abstracts: Option<String>,
     paper_cache: Arc<RwLock<HashMap<String, Paper>>>,
     cached_years: Arc<RwLock<Option<HashSet<u16>>>>,
 }
@@ -43,6 +45,7 @@ impl DblpScraper {
             year_range: (year_start, year_end),
             interval: DEFAULT_INTERVAL,
             sparql_endpoint: sparql::SPARQL_ENDPOINT.to_string(),
+            eprint_abstracts: None,
             paper_cache: Arc::new(RwLock::new(HashMap::new())),
             cached_years: Arc::new(RwLock::new(None)),
         }
@@ -51,6 +54,38 @@ impl DblpScraper {
     pub fn with_interval(mut self, interval: Duration) -> Self {
         self.interval = interval;
         self
+    }
+
+    /// アブストラクトを ePrint で補う（IACR の会議向け．MYTASK-3420）
+    pub fn with_eprint_abstracts(mut self, eprint_base_url: &str) -> Self {
+        self.eprint_abstracts = Some(eprint_base_url.to_string());
+        self
+    }
+
+    /// アブストラクトの無い論文に，タイトルが一致する ePrint 論文のアブストラクトを付ける．
+    /// ePrint を取れなかったときは年ごと失敗にする（付けずに入れると，取得済み扱いになり後から補えない）．
+    async fn fill_abstracts(&self, client: &reqwest::Client, papers: &mut [Paper]) -> Result<()> {
+        let Some(base_url) = &self.eprint_abstracts else {
+            return Ok(());
+        };
+        let harvest = crate::scraper::eprint::oai::shared_harvest(client, base_url, self.interval)
+            .await
+            .with_context(|| format!("ePrint abstracts unavailable for {}", self.conf_id))?;
+        let mut filled = 0usize;
+        for paper in papers.iter_mut().filter(|p| p.r#abstract.is_empty()) {
+            if let Some(abs) = harvest.abstract_for(&paper.title) {
+                paper.r#abstract = abs.to_string();
+                paper.hash = api::compute_hash(&paper.title, &paper.r#abstract);
+                filled += 1;
+            }
+        }
+        tracing::info!(
+            "{}: abstracts from ePrint for {} of {} papers",
+            self.conf_id,
+            filled,
+            papers.len()
+        );
+        Ok(())
     }
 
     #[cfg(test)]
@@ -126,7 +161,8 @@ impl DblpScraper {
             }
         }
 
-        let papers = self.load_year(client, year).await?;
+        let mut papers = self.load_year(client, year).await?;
+        self.fill_abstracts(client, &mut papers).await?;
 
         let mut cache = self.paper_cache.write().await;
         for paper in papers {
@@ -153,6 +189,10 @@ impl ConferenceScraper for DblpScraper {
 
     fn backend_id(&self) -> &str {
         "dblp"
+    }
+
+    fn details_are_local(&self) -> bool {
+        true
     }
 
     async fn fetch_years(&self, _client: &reqwest::Client) -> Result<Vec<u16>> {
@@ -373,5 +413,90 @@ mod tests {
             .unwrap();
         assert_eq!(paper.url, "https://doi.org/10.1/x");
         assert_eq!(paper.year, 2026);
+    }
+
+    fn two_paper_sparql() -> &'static str {
+        r#"{"head": {"vars": ["paper", "title"]},
+            "results": {"bindings": [
+              {"paper": {"type": "uri", "value": "https://dblp.org/rec/conf/crypto/A25"},
+               "title": {"type": "literal", "value": "Lattice Signatures, Revisited."}},
+              {"paper": {"type": "uri", "value": "https://dblp.org/rec/conf/crypto/B25"},
+               "title": {"type": "literal", "value": "Not On ePrint."}}
+            ]}, "meta": {"result-size-total": 2}}"#
+    }
+
+    #[tokio::test]
+    async fn eprint_abstracts_fill_matching_titles() {
+        use crate::scraper::eprint::oai::tests::{page, record};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sparql"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(two_paper_sparql()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/eprint/oai"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(page(
+                &[record(
+                    "2025/77",
+                    "Lattice signatures revisited",
+                    "We revisit.",
+                    &[],
+                )],
+                None,
+            )))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let scraper = DblpScraper::new("crypto", "CRYPTO", "crypto", 1981, 2026)
+            .with_interval(Duration::ZERO)
+            .with_sparql_endpoint(&format!("{}/sparql", server.uri()))
+            .with_eprint_abstracts(&format!("{}/eprint", server.uri()));
+        let client = reqwest::Client::new();
+        let entries = scraper.fetch_paper_list(&client, 2025).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        let mut by_title = HashMap::new();
+        for e in &entries {
+            let p = scraper.fetch_paper_detail(&client, e).await.unwrap();
+            by_title.insert(p.title.clone(), p);
+        }
+        let a = &by_title["Lattice Signatures, Revisited"];
+        assert_eq!(a.r#abstract, "We revisit.");
+        assert_eq!(a.hash, api::compute_hash(&a.title, "We revisit."));
+        assert_eq!(by_title["Not On ePrint"].r#abstract, "");
+    }
+
+    #[tokio::test]
+    async fn eprint_failure_fails_the_year() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sparql"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(two_paper_sparql()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/broken/oai"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let scraper = DblpScraper::new("crypto", "CRYPTO", "crypto", 1981, 2026)
+            .with_interval(Duration::ZERO)
+            .with_sparql_endpoint(&format!("{}/sparql", server.uri()))
+            .with_eprint_abstracts(&format!("{}/broken", server.uri()));
+        let client = reqwest::Client::new();
+        let err = scraper.fetch_paper_list(&client, 2025).await.unwrap_err();
+        assert!(
+            format!("{:#}", err).contains("ePrint abstracts unavailable"),
+            "{:#}",
+            err
+        );
     }
 }
