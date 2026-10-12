@@ -71,9 +71,9 @@ impl AclAnthologyScraper {
         let url = "https://api.github.com/repos/acl-org/acl-anthology/contents/data/xml";
         tracing::debug!("Fetching GitHub API: {}", url);
 
-        let resp = client.get(url).send().await?.error_for_status()?;
-        let entries: Vec<GitHubContentEntry> = resp.json().await?;
-        tokio::time::sleep(self.interval).await;
+        // 429 の待機とボット確認画面の検出を通す（MYTASK-3422）．間隔もここであく
+        let body = crate::scraper::fetch_with_sleep(client, url, self.interval).await?;
+        let entries: Vec<GitHubContentEntry> = serde_json::from_str(&body)?;
 
         // Parse filenames matching {year}.{venue_id}.xml
         let suffix = format!(".{}.xml", self.venue_id);

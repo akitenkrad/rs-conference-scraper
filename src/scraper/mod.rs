@@ -151,6 +151,10 @@ pub(crate) fn detect_bot_challenge(body: &str) -> Option<&'static str> {
         end -= 1;
     }
     let head = body[..end].to_ascii_lowercase();
+    // OpenReview の API は JSON で確認を求める（Accept が JSON のとき．2026-10 から）
+    if head.trim_start().starts_with('{') && head.contains("\"challengerequirederror\"") {
+        return Some("OpenReview");
+    }
     if !head.contains("<html") {
         return None;
     }
@@ -161,6 +165,9 @@ pub(crate) fn detect_bot_challenge(body: &str) -> Option<&'static str> {
         Some("Cloudflare")
     } else if title.starts_with("making sure you") {
         Some("Anubis")
+    } else if title.starts_with("verifying your browser") {
+        // OpenReview の API は Accept が HTML だと /challenge へ転送し，Turnstile の画面を 200 で返す
+        Some("OpenReview")
     } else {
         None
     }
@@ -322,6 +329,18 @@ mod tests {
     fn detects_anubis_and_cloudflare_challenges() {
         assert_eq!(detect_bot_challenge(ANUBIS_PAGE), Some("Anubis"));
         assert_eq!(detect_bot_challenge(CLOUDFLARE_PAGE), Some("Cloudflare"));
+    }
+
+    #[test]
+    fn detects_openreview_challenges() {
+        // Accept が HTML：/challenge へ転送された先の Turnstile の画面（200）
+        let page = "<!DOCTYPE html><html lang=\"en\"><head><title>Verifying your browser | OpenReview</title></head></html>";
+        assert_eq!(detect_bot_challenge(page), Some("OpenReview"));
+        // Accept が JSON：403 の JSON
+        let json = r#"{"name":"ChallengeRequiredError","message":"Challenge verification required","status":403}"#;
+        assert_eq!(detect_bot_challenge(json), Some("OpenReview"));
+        // 論文の JSON にその語が題として出ても，name でなければ拾わない
+        assert_eq!(detect_bot_challenge(r#"{"notes": [{"title": "ChallengeRequiredError in practice"}]}"#), None);
     }
 
     #[test]

@@ -193,8 +193,8 @@ pub async fn fetch_papers_for_year(
     match year {
         2018 => fetch_v1_legacy_2018(client, interval).await,
         2019 => fetch_v1_legacy_2019(client, interval).await,
-        2020..=2023 => fetch_v1(client, year, interval).await,
-        2024.. => fetch_v2(client, year, interval).await,
+        2020..=2023 => fetch_v1(client, API_V1_BASE, year, interval).await,
+        2024.. => fetch_v2(client, API_V2_BASE, year, interval).await,
         _ => bail!(
             "ICLR scraping for year {} is not supported",
             year
@@ -351,6 +351,7 @@ async fn fetch_v1_legacy_2019(
 
 async fn fetch_v2(
     client: &reqwest::Client,
+    base: &str,
     year: u16,
     interval: Duration,
 ) -> Result<Vec<Paper>> {
@@ -361,12 +362,13 @@ async fn fetch_v2(
     loop {
         let url = format!(
             "{}/notes?content.venueid={}&limit={}&offset={}",
-            API_V2_BASE, venue_id, PAGE_LIMIT, offset
+            base, venue_id, PAGE_LIMIT, offset
         );
         tracing::debug!("GET {}", url);
 
-        let resp = client.get(&url).send().await?.error_for_status()?;
-        let body: ApiResponseV2 = resp.json().await?;
+        // 429 の待機とボット確認画面の検出を通す（MYTASK-3422）．間隔もここであく
+        let resp = crate::scraper::fetch_with_sleep(client, &url, interval).await?;
+        let body: ApiResponseV2 = serde_json::from_str(&resp)?;
 
         let total = body.count.unwrap_or(0);
         let page_len = body.notes.len() as u64;
@@ -407,7 +409,6 @@ async fn fetch_v2(
             break;
         }
 
-        tokio::time::sleep(interval).await;
     }
 
     Ok(papers)
@@ -415,6 +416,7 @@ async fn fetch_v2(
 
 async fn fetch_v1(
     client: &reqwest::Client,
+    base: &str,
     year: u16,
     interval: Duration,
 ) -> Result<Vec<Paper>> {
@@ -425,12 +427,13 @@ async fn fetch_v1(
     loop {
         let url = format!(
             "{}/notes?content.venueid={}&limit={}&offset={}",
-            API_V1_BASE, venue_id, PAGE_LIMIT, offset
+            base, venue_id, PAGE_LIMIT, offset
         );
         tracing::debug!("GET {}", url);
 
-        let resp = client.get(&url).send().await?.error_for_status()?;
-        let body: ApiResponseV1 = resp.json().await?;
+        // 429 の待機とボット確認画面の検出を通す（MYTASK-3422）．間隔もここであく
+        let resp = crate::scraper::fetch_with_sleep(client, &url, interval).await?;
+        let body: ApiResponseV1 = serde_json::from_str(&resp)?;
 
         let total = body.count.unwrap_or(0);
         let page_len = body.notes.len() as u64;
@@ -463,7 +466,6 @@ async fn fetch_v1(
             break;
         }
 
-        tokio::time::sleep(interval).await;
     }
 
     Ok(papers)
@@ -476,6 +478,67 @@ async fn fetch_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 429（Retry-After あり）のあと成功する応答で，取り直して読めること（MYTASK-3422）
+    #[tokio::test]
+    async fn fetch_v2_retries_after_429() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/notes"))
+            .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let body = r#"{"notes": [{"id": "a1", "forum": "a1", "content": {
+            "title": {"value": "A Great Paper"}, "authors": {"value": ["Alice"]},
+            "abstract": {"value": "Great."}, "venue": {"value": "ICLR 2024 poster"}}}],
+            "count": 1}"#;
+        Mock::given(method("GET"))
+            .and(path("/notes"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let papers = fetch_v2(&client, &server.uri(), 2024, Duration::ZERO)
+            .await
+            .unwrap();
+        assert_eq!(papers.len(), 1);
+        assert_eq!(papers[0].title, "A Great Paper");
+        assert_eq!(papers[0].r#abstract, "Great.");
+    }
+
+    /// ボットの確認画面は再試行せず，確認画面だと分かるエラーにする（MYTASK-3422）
+    #[tokio::test]
+    async fn fetch_v1_reports_bot_challenge() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/notes"))
+            .respond_with(ResponseTemplate::new(403).set_body_string(
+                "<!DOCTYPE html><html><head><title>Just a moment...</title></head></html>",
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let err = fetch_v1(&client, &server.uri(), 2022, Duration::ZERO)
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{:#}", err).contains("blocked by bot challenge"),
+            "{:#}",
+            err
+        );
+    }
 
     #[test]
     fn test_parse_v2_response() {
