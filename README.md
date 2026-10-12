@@ -1,253 +1,43 @@
+<p align="center"><img src="docs/assets/hero.svg" width="100%"></p>
+
+**English** | [日本語](README.ja.md)
+
 # conf-scraper
 
-Academic paper scraping and filtering tool. Collects paper metadata (title, authors, abstract, PDF URL) from major conferences and journals, and stores them in a local SQLite cache for keyword/category/LLM-based filtering.
+`conf-scraper` collects paper metadata — title, authors, abstract, URL, PDF URL — from 45 conferences and journals in NLP, ML, CV, security, cryptography, networking, data mining, simulation and Japanese academic societies, and keeps it in a local SQLite cache. Once synced, the cache can be filtered by keyword or category, summarized, or read as JSON by other programs such as a dashboard. Each venue is fetched from the source its publisher intends for machine access (ACL Anthology XML, OpenReview, DBLP SPARQL, the IACR ePrint OAI-PMH feed, CiNii Research, …), with rate limiting and `Retry-After` handling built in.
 
-## Installation
+## Install
 
 ```bash
 cargo install --path .
 ```
 
-## Supported Venues
-
-Run `conf-scraper list-conferences` for the authoritative list.
-
-| Category | ID | Venue | Year Range |
-|----------|----|-------|------------|
-| **NLP** | `acl` | ACL | 2002– |
-| | `emnlp` | EMNLP | 2002– |
-| | `naacl` | NAACL | 2003– |
-| | `coling` | COLING | 2002– |
-| | `eacl` | EACL | 2003– |
-| | `aacl` | AACL | 2020– |
-| | `lrec` | LREC | 2002– |
-| | `conll` | CoNLL | 2002– |
-| | `semeval` | SemEval | 2007– |
-| | `sigdial` | SIGDIAL | 2003– |
-| | `ijcnlp` | IJCNLP | 2005– |
-| | `wmt` | WMT | 2006– |
-| **ML** | `neurips` | NeurIPS | 1987– |
-| | `iclr` | ICLR | 2018– |
-| | `icml` | ICML | 2018– |
-| **CV** | `cvpr` | CVPR | 2013– |
-| | `iccv` | ICCV | 2013– (biennial) |
-| **Security** | `usenix-security` | USENIX Security | 2014– |
-| | `ndss` | NDSS | 2014– |
-| | `sp` | IEEE S&P | 1981– |
-| | `ccs` | CCS | 1994– |
-| | `dsn` | IEEE/IFIP DSN | 2000– |
-| | `raid` | RAID | 1998– |
-| | `esorics` | ESORICS | 1990– |
-| | `dimva` | DIMVA | 2004– |
-| | `acsac` | ACSAC | 1985– |
-| | `cns` | IEEE CNS | 2013– |
-| **Cryptography** | `crypto` | CRYPTO | 1981– |
-| | `eurocrypt` | EUROCRYPT | 1985– |
-| | `asiacrypt` | ASIACRYPT | 1991– |
-| | `eprint` | IACR ePrint | 1996– |
-| **Networking** | `sigcomm` | ACM SIGCOMM | 1988– |
-| | `infocom` | IEEE INFOCOM | 1982– |
-| | `imc` | IMC | 2001– |
-| **Data Mining** | `kdd` | KDD | 1995– |
-| | `icdm` | IEEE ICDM | 2001– |
-| **Multi-Agent** | `aamas` | AAMAS | 2013– |
-| **Simulation** | `jasss` | JASSS | 1998– |
-| | `wsc` | WSC | 1968– |
-| | `sng` | Simulation & Gaming (SAGE) | 1976– |
-| | `jasag-sng` | シミュレーション&ゲーミング (JASAG) | 1991– |
-| **Sociology** | `jms` | J. Math. Sociol. | 1971– |
-| **Japanese** | `tjsai` | 人工知能学会論文誌 | 1986– |
-| | `ipsj-jnl` | 情報処理学会論文誌 | 1960– |
-| | `ieice-d` | 電子情報通信学会論文誌D | 1985– |
-
-## Usage
-
-### Sync papers
-
-Scrape paper metadata from a conference and cache it locally.
+## Quick start
 
 ```bash
+# See which venues are supported
+conf-scraper list-conferences
+
 # Sync NeurIPS 2024 papers
 conf-scraper sync --conference neurips --year 2024
 
-# Sync ACL 2023-2024 with 8 parallel jobs
-conf-scraper sync --conference acl --year 2023-2024 --jobs 8
-
-# Sync CRYPTO 2020-2024 (DBLP; abstracts matched from ePrint by title)
-conf-scraper sync --conference crypto --year 2020-2024
-
-# Sync IEEE S&P 2024 (via the DBLP SPARQL endpoint, no abstracts)
-conf-scraper sync --conference sp --year 2024
-
-# Sync Journal of Mathematical Sociology 2020-2024 (via OpenAlex API)
-conf-scraper sync --conference jms --year 2020-2024
-
-# Sync TJSAI (人工知能学会論文誌) via CiNii Research — requires CINII_APPID
-export CINII_APPID=<your-appid>
-conf-scraper sync --conference tjsai --year 2020-2024
-
-# Incremental sync (skip already-completed years)
-conf-scraper sync --conference emnlp --year 2020-2024 --incremental
-```
-
-A year is marked completed only when its paper list was fetched and every paper in it was
-saved. If any year is left incomplete, `sync` names those years and exits with a non-zero
-status; run it again with `--incremental` to fetch only what is missing. Examples of causes:
-
-- the paper list could not be fetched
-- some papers failed
-- the source rate-limited the requests
-- the source answered with a bot-challenge page
-
-On HTTP 429, requests wait as the source's `Retry-After` header says, or up to 15–120 s when
-the header is missing, for at most 5 retries. Bot-challenge pages (Cloudflare, Anubis) are
-reported as `blocked by bot challenge` and are not retried.
-
-### Filter papers
-
-Search cached papers by keywords, categories, or LLM scoring.
-
-```bash
 # Keyword filter
 conf-scraper filter --conference neurips --year 2024 \
   --filter keyword --keywords "transformer,attention"
 
-# Keyword filter on title only
-conf-scraper filter --conference acl --year 2024 \
-  --filter keyword --keywords "LLM,large language model" --fields title
-
-# Category filter
-conf-scraper filter --conference neurips --year 2024 \
-  --filter category --tags "Datasets and Benchmarks"
-
-# Combined filters (AND)
-conf-scraper filter --conference acl --year 2024 \
-  --filter keyword,category --keywords "summarization" --tags "Long Papers"
-
-# LLM scoring with Anthropic API
-conf-scraper filter --conference neurips --year 2024 \
-  --filter llm --theme "papers about efficient inference for LLMs" \
-  --threshold 0.8
-
-# Save results to JSON
-conf-scraper filter --conference iclr --year 2024 \
-  --filter keyword --keywords "diffusion" --output results.json
-```
-
-### View statistics
-
-```bash
-# All conferences
-conf-scraper stats
-
-# Specific conference and year
-conf-scraper stats --conference neurips --year 2024
-```
-
-### Query for dashboards (JSON)
-
-`query` prints JSON only on stdout (logs go to stderr), so other programs — such as an
-Obsidian dashboard calling the binary via `execFile` — can parse the output directly.
-Listings are always paged and never include abstracts; fetch a single paper to get its abstract.
-
-```bash
-# Venue × year catalog: paper counts, abstract coverage, sync state
+# Venue × year catalog as JSON
 conf-scraper query catalog
-
-# One page of papers (terms are AND-ed, case-insensitive; max 500 per page)
-conf-scraper query papers --conference acl,emnlp --year 2024-2025 \
-  --q "agent planning" --fields title,abstract --offset 0 --limit 50 --facets
-
-# One paper including its abstract ({"paper": null} if not found)
-conf-scraper query paper --id <id> --conference acl --year 2025
 ```
 
-`--facets` adds per-conference and per-year counts, each computed with only its own axis
-filter removed. `--sort` accepts `year-desc` (default), `year-asc`, or `title`.
+The cache lives in `~/.cache/conf-scraper` by default (`--cache-dir` changes it).
 
-### Cache management
+## Documentation
 
-```bash
-# Check cache status
-conf-scraper cache status
-conf-scraper cache status --conference neurips
-
-# Clear cache
-conf-scraper cache clear --conference neurips --year 2023
-conf-scraper cache clear  # clear all
-```
-
-### Scheduled sync
-
-`tools/weekly_sync.sh` runs `sync --incremental` for every venue in the catalog over the
-previous and current year. Because `--incremental` re-checks completed years for those two
-years, editions that were only partially published at the last sync are filled in later.
-It reads `CINII_APPID` from `~/.zshrc` when the variable is not set (and skips the CiNii
-venues if it is still missing), and refuses to start while another run holds its lock. Its exit status is that of `sync`,
-so a run that left years incomplete shows up as a failure in the scheduler.
-
-```bash
-bash tools/weekly_sync.sh   # e.g. from a weekly launchd agent
-```
-
-## Data Sources
-
-| Venues | Source | Method | Abstracts |
-|--------|--------|--------|-----------|
-| ACL, EMNLP, NAACL, COLING, EACL, AACL, LREC, CoNLL, SemEval, SIGDIAL, IJCNLP, WMT | ACL Anthology (GitHub XML) | XML parse | Yes |
-| NeurIPS | papers.nips.cc | HTML scrape (2-pass) | Yes |
-| ICLR | OpenReview API (v1/v2) | REST API | Yes |
-| ICML | proceedings.mlr.press | HTML scrape (2-pass) | Yes |
-| CVPR, ICCV | openaccess.thecvf.com | HTML scrape (2-pass) | Yes |
-| USENIX Security | usenix.org | HTML scrape (10s crawl delay) | Yes |
-| NDSS | ndss-symposium.org | HTML scrape (2-pass) | Yes |
-| AAMAS | ifaamas.org | HTML scrape | No |
-| CRYPTO, EUROCRYPT, ASIACRYPT | DBLP SPARQL endpoint; abstracts from the ePrint OAI-PMH feed, matched by title | SPARQL + OAI-PMH | Partial (papers also posted to ePrint) |
-| IACR ePrint | eprint.iacr.org OAI-PMH (CC0 metadata) | OAI-PMH bulk harvest (~60 requests for the whole archive) | Yes |
-| IEEE S&P, CCS, DSN, RAID, ESORICS, DIMVA, ACSAC, CNS, INFOCOM, SIGCOMM, IMC, KDD, ICDM, WSC | DBLP SPARQL endpoint (sparql.dblp.org); Search API and XML as fallbacks | SPARQL (JSON results) | No |
-| JASSS | jasss.org | HTML scrape | Yes |
-| J. Math. Sociol., Simulation & Gaming | OpenAlex API (api.openalex.org) | JSON API (ISSN filter) | Partial |
-| TJSAI, IPSJ-JNL, IEICE-D, JASAG SG | CiNii Research API (cir.nii.ac.jp) | JSON-LD API (ISSN filter, requires `CINII_APPID`) | Partial (license-gated) |
-
-Abstracts marked **No** or **Partial** are supplemented by the enrichment pipeline (HTML → PDF → LLM tiers).
-CiNii journals additionally drop abstracts when `abstractLicenseFlag != "allow"`.
-
-## Configuration
-
-### CLI options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--cache-dir` | `~/.cache/conf-scraper` | SQLite cache directory |
-| `--interval` | `1.5` | Seconds between HTTP requests |
-| `--jobs` | `4` | Parallel abstract fetch concurrency |
-| `--checkpoint` | `100` | Papers per batch save |
-| `--retry` | `3` | Number of retries on failure |
-| `-v, --verbose` | off | Debug logging |
-
-### Environment variables
-
-| Variable | Required for | Purpose |
-|----------|--------------|---------|
-| `CINII_APPID` | `tjsai`, `ipsj-jnl`, `ieice-d`, `jasag-sng` | CiNii Research API key. Get one at <https://support.nii.ac.jp/ja/cir/r_opensearch>. |
-| `ANTHROPIC_API_KEY` | `filter --filter llm` | Anthropic API key for LLM scoring. |
-
-Sensitive query parameter values (`appid`, `api_key`, `token`, `apikey`, `key`) are
-automatically redacted to `***` in `-v` debug logs to prevent credential leakage.
-
-## Development
-
-```bash
-# Build
-cargo build
-
-# Run tests
-cargo test
-
-# Run with verbose logging
-cargo run -- -v sync --conference neurips --year 2024
-```
+- [Use cases](docs/usecases.md) — building a corpus, literature surveys, dashboards, scheduled sync
+- [CLI reference](docs/cli.md) — every command and option, exit status, retry behavior
+- [Venues and data sources](docs/venues.md) — supported venues, where each one comes from, abstract coverage
+- [Architecture](docs/architecture.md) — module layout, the sync pipeline, the cache schema, adding a venue
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
