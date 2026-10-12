@@ -146,8 +146,7 @@ fn parse_ndss(document: &Html) -> Option<String> {
 
 /// USENIX: `.field-name-field-paper-description .field-item`
 fn parse_usenix(document: &Html) -> Option<String> {
-    let sel =
-        Selector::parse(".field-name-field-paper-description .field-item").ok()?;
+    let sel = Selector::parse(".field-name-field-paper-description .field-item").ok()?;
     let el = document.select(&sel).next()?;
     let text: String = el.text().collect::<Vec<_>>().join(" ");
     if text.trim().is_empty() {
@@ -244,10 +243,7 @@ mod tests {
             clean_abstract_text("This  is   a    test."),
             "This is a test."
         );
-        assert_eq!(
-            clean_abstract_text("  Line1\n  Line2  "),
-            "Line1 Line2"
-        );
+        assert_eq!(clean_abstract_text("  Line1\n  Line2  "), "Line1 Line2");
     }
 
     #[test]
@@ -259,7 +255,10 @@ mod tests {
         "#;
         let doc = Html::parse_document(html);
         let result = parse_acl_anthology(&doc);
-        assert_eq!(result, Some("This is the abstract text from ACL.".to_string()));
+        assert_eq!(
+            result,
+            Some("This is the abstract text from ACL.".to_string())
+        );
     }
 
     #[test]
@@ -309,8 +308,12 @@ mod tests {
         "#;
         let doc = Html::parse_document(html);
         // try_site_specific_extraction 経由でテスト（clean_abstract_text が適用される）
-        let result = try_site_specific_extraction("https://papers.neurips.cc/paper/123", html, &doc);
-        assert_eq!(result, Some("We present a novel approach to deep learning.".to_string()));
+        let result =
+            try_site_specific_extraction("https://papers.neurips.cc/paper/123", html, &doc);
+        assert_eq!(
+            result,
+            Some("We present a novel approach to deep learning.".to_string())
+        );
     }
 
     #[test]
@@ -392,7 +395,10 @@ mod tests {
         let result = parse_springer(&doc);
         assert_eq!(
             result,
-            Some("This paper presents a comprehensive survey of privacy-preserving techniques.".to_string())
+            Some(
+                "This paper presents a comprehensive survey of privacy-preserving techniques."
+                    .to_string()
+            )
         );
     }
 
@@ -407,7 +413,10 @@ mod tests {
         let result = parse_springer(&doc);
         assert_eq!(
             result,
-            Some("We study the problem of distributed consensus in adversarial settings.".to_string())
+            Some(
+                "We study the problem of distributed consensus in adversarial settings."
+                    .to_string()
+            )
         );
     }
 }

@@ -1,6 +1,6 @@
 pub mod api;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::conference::ConferenceScraper;
-use crate::types::{compute_id, Paper, PaperListEntry};
+use crate::types::{Paper, PaperListEntry, compute_id};
 
 /// OpenAlex 推奨レート (10 req/s) に収まる間隔
 const DEFAULT_INTERVAL: Duration = Duration::from_millis(150);
@@ -25,13 +25,7 @@ pub struct OpenAlexScraper {
 }
 
 impl OpenAlexScraper {
-    pub fn new(
-        conf_id: &str,
-        conf_name: &str,
-        issn: &str,
-        year_start: u16,
-        year_end: u16,
-    ) -> Self {
+    pub fn new(conf_id: &str, conf_name: &str, issn: &str, year_start: u16, year_end: u16) -> Self {
         Self {
             conf_id: conf_id.to_string(),
             conf_name: conf_name.to_string(),
@@ -58,14 +52,9 @@ impl OpenAlexScraper {
             }
         }
 
-        let papers = api::fetch_papers_for_year(
-            client,
-            &self.issn,
-            &self.conf_id,
-            year,
-            self.interval,
-        )
-        .await?;
+        let papers =
+            api::fetch_papers_for_year(client, &self.issn, &self.conf_id, year, self.interval)
+                .await?;
 
         let mut cache = self.paper_cache.write().await;
         for paper in papers {

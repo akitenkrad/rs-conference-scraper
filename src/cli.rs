@@ -3,7 +3,11 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "conf-scraper", version, about = "Conference paper scraping and filtering tool")]
+#[command(
+    name = "conf-scraper",
+    version,
+    about = "Conference paper scraping and filtering tool"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

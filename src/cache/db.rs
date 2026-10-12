@@ -115,17 +115,18 @@ impl CacheDb {
             params_vec.push(Box::new(conf.to_string()));
         }
         if let Some(yrs) = years
-            && !yrs.is_empty() {
-                let placeholders: Vec<String> = yrs
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| format!("?{}", params_vec.len() + i + 1))
-                    .collect();
-                sql.push_str(&format!(" AND year IN ({})", placeholders.join(",")));
-                for y in yrs {
-                    params_vec.push(Box::new(*y as i64));
-                }
+            && !yrs.is_empty()
+        {
+            let placeholders: Vec<String> = yrs
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", params_vec.len() + i + 1))
+                .collect();
+            sql.push_str(&format!(" AND year IN ({})", placeholders.join(",")));
+            for y in yrs {
+                params_vec.push(Box::new(*y as i64));
             }
+        }
         sql.push_str(" ORDER BY year DESC, title ASC");
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -205,14 +206,8 @@ impl CacheDb {
                 )?;
             }
             (Some(conf), None) => {
-                deleted = tx.execute(
-                    "DELETE FROM papers WHERE conference=?1",
-                    params![conf],
-                )?;
-                tx.execute(
-                    "DELETE FROM sync_years WHERE conference=?1",
-                    params![conf],
-                )?;
+                deleted = tx.execute("DELETE FROM papers WHERE conference=?1", params![conf])?;
+                tx.execute("DELETE FROM sync_years WHERE conference=?1", params![conf])?;
             }
             (None, Some(y)) => {
                 deleted = tx.execute("DELETE FROM papers WHERE year=?1", params![y])?;
@@ -228,11 +223,7 @@ impl CacheDb {
     }
 
     /// 統計情報を取得
-    pub fn stats(
-        &self,
-        conference: Option<&str>,
-        years: Option<&[u16]>,
-    ) -> Result<PaperStats> {
+    pub fn stats(&self, conference: Option<&str>, years: Option<&[u16]>) -> Result<PaperStats> {
         // WHERE句の構築
         let (where_clause, params_vec) = self.build_where_clause(conference, years);
 
@@ -242,9 +233,9 @@ impl CacheDb {
         // 総論文数
         let total: usize = {
             let sql = format!("SELECT COUNT(*) FROM papers{}", where_clause);
-            self.conn.query_row(&sql, params_refs.as_slice(), |row| {
-                row.get::<_, i64>(0)
-            })? as usize
+            self.conn
+                .query_row(&sql, params_refs.as_slice(), |row| row.get::<_, i64>(0))?
+                as usize
         };
 
         // 会議別集計
@@ -283,22 +274,18 @@ impl CacheDb {
                     where_clause.clone()
                 }
             );
-            self.conn.query_row(&sql, params_refs.as_slice(), |row| {
-                row.get::<_, i64>(0)
-            })? as usize
+            self.conn
+                .query_row(&sql, params_refs.as_slice(), |row| row.get::<_, i64>(0))?
+                as usize
         };
 
         // ユニーク著者数 & トップ著者
         let (unique_authors, top_authors) = {
-            let sql = format!(
-                "SELECT authors FROM papers{}",
-                where_clause
-            );
+            let sql = format!("SELECT authors FROM papers{}", where_clause);
             let mut stmt = self.conn.prepare(&sql)?;
-            let mut author_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-            let rows = stmt.query_map(params_refs.as_slice(), |row| {
-                row.get::<_, String>(0)
-            })?;
+            let mut author_count: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            let rows = stmt.query_map(params_refs.as_slice(), |row| row.get::<_, String>(0))?;
             for row in rows {
                 let json = row?;
                 if let Ok(authors) = serde_json::from_str::<Vec<String>>(&json) {
@@ -316,15 +303,11 @@ impl CacheDb {
 
         // カテゴリ別集計
         let by_category = {
-            let sql = format!(
-                "SELECT categories FROM papers{}",
-                where_clause
-            );
+            let sql = format!("SELECT categories FROM papers{}", where_clause);
             let mut stmt = self.conn.prepare(&sql)?;
-            let mut cat_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-            let rows = stmt.query_map(params_refs.as_slice(), |row| {
-                row.get::<_, String>(0)
-            })?;
+            let mut cat_count: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            let rows = stmt.query_map(params_refs.as_slice(), |row| row.get::<_, String>(0))?;
             for row in rows {
                 let json = row?;
                 if let Ok(categories) = serde_json::from_str::<Vec<String>>(&json) {
@@ -387,17 +370,18 @@ impl CacheDb {
             clauses.push(format!("conference=?{}", params_vec.len()));
         }
         if let Some(yrs) = years
-            && !yrs.is_empty() {
-                let placeholders: Vec<String> = yrs
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| format!("?{}", params_vec.len() + i + 1))
-                    .collect();
-                clauses.push(format!("year IN ({})", placeholders.join(",")));
-                for y in yrs {
-                    params_vec.push(Box::new(*y as i64));
-                }
+            && !yrs.is_empty()
+        {
+            let placeholders: Vec<String> = yrs
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", params_vec.len() + i + 1))
+                .collect();
+            clauses.push(format!("year IN ({})", placeholders.join(",")));
+            for y in yrs {
+                params_vec.push(Box::new(*y as i64));
             }
+        }
 
         let where_clause = if clauses.is_empty() {
             String::new()
@@ -424,17 +408,18 @@ impl CacheDb {
             params_vec.push(Box::new(conf.to_string()));
         }
         if let Some(yrs) = years
-            && !yrs.is_empty() {
-                let placeholders: Vec<String> = yrs
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| format!("?{}", params_vec.len() + i + 1))
-                    .collect();
-                sql.push_str(&format!(" AND year IN ({})", placeholders.join(",")));
-                for y in yrs {
-                    params_vec.push(Box::new(*y as i64));
-                }
+            && !yrs.is_empty()
+        {
+            let placeholders: Vec<String> = yrs
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", params_vec.len() + i + 1))
+                .collect();
+            sql.push_str(&format!(" AND year IN ({})", placeholders.join(",")));
+            for y in yrs {
+                params_vec.push(Box::new(*y as i64));
             }
+        }
         sql.push_str(" ORDER BY year DESC, title ASC");
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::scraper::fetch_with_sleep;
-use crate::types::{compute_id, Paper};
+use crate::types::{Paper, compute_id};
 
 // ---------------------------------------------------------------------------
 // OpenAlex Works API レスポンス型
@@ -216,9 +216,7 @@ pub async fn fetch_papers_for_year(
 
         let body = fetch_with_sleep(client, url.as_str(), interval)
             .await
-            .with_context(|| {
-                format!("OpenAlex fetch failed for ISSN {} year {}", issn, year)
-            })?;
+            .with_context(|| format!("OpenAlex fetch failed for ISSN {} year {}", issn, year))?;
 
         let resp: OpenAlexResponse =
             serde_json::from_str(&body).context("Failed to parse OpenAlex response")?;

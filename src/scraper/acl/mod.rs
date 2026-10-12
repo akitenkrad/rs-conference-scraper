@@ -13,7 +13,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::conference::ConferenceScraper;
-use crate::types::{compute_id, Paper, PaperListEntry};
+use crate::types::{Paper, PaperListEntry, compute_id};
 
 const DEFAULT_INTERVAL: Duration = Duration::from_millis(1500);
 
@@ -56,10 +56,7 @@ impl AclAnthologyScraper {
     }
 
     /// Fetch and cache the set of years for which XML files exist on GitHub.
-    async fn get_xml_available_years(
-        &self,
-        client: &reqwest::Client,
-    ) -> Result<HashSet<u16>> {
+    async fn get_xml_available_years(&self, client: &reqwest::Client) -> Result<HashSet<u16>> {
         // Return cached value if available
         {
             let cache = self.xml_available_years.read().await;
@@ -80,9 +77,10 @@ impl AclAnthologyScraper {
         let mut years = HashSet::new();
         for entry in &entries {
             if let Some(year_str) = entry.name.strip_suffix(&suffix)
-                && let Ok(year) = year_str.parse::<u16>() {
-                    years.insert(year);
-                }
+                && let Ok(year) = year_str.parse::<u16>()
+            {
+                years.insert(year);
+            }
         }
 
         // Cache the result
@@ -128,8 +126,7 @@ impl ConferenceScraper for AclAnthologyScraper {
         if xml_years.contains(&year) {
             // Try XML approach first
             let url = format!("{}/{}.{}.xml", self.xml_base_url, year, self.venue_id);
-            let xml_body =
-                crate::scraper::fetch_with_sleep(client, &url, self.interval).await?;
+            let xml_body = crate::scraper::fetch_with_sleep(client, &url, self.interval).await?;
             let parsed = xml::parse_xml(&xml_body, &self.venue_id, year)?;
 
             if !parsed.entries.is_empty() {
@@ -152,8 +149,7 @@ impl ConferenceScraper for AclAnthologyScraper {
 
         // HTML scraping fallback
         let url = format!("{}/events/{}-{}/", self.base_url, self.venue_id, year);
-        let page_html =
-            crate::scraper::fetch_with_sleep(client, &url, self.interval).await?;
+        let page_html = crate::scraper::fetch_with_sleep(client, &url, self.interval).await?;
         let parsed = html::parse_event_page(&page_html, &self.venue_id, year)?;
         Ok(parsed)
     }
@@ -176,8 +172,7 @@ impl ConferenceScraper for AclAnthologyScraper {
         // HTML case: fetch individual page for abstract
         let abstract_text = if !entry.detail_url.is_empty() {
             let page_html =
-                crate::scraper::fetch_with_sleep(client, &entry.detail_url, self.interval)
-                    .await?;
+                crate::scraper::fetch_with_sleep(client, &entry.detail_url, self.interval).await?;
             paper_page::parse_abstract(&page_html)
         } else {
             String::new()

@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 
 use crate::scraper::fetch_with_sleep;
-use crate::types::{compute_id, Paper};
+use crate::types::{Paper, compute_id};
 
 // ---------------------------------------------------------------------------
 // 定数
@@ -348,8 +348,9 @@ async fn fetch_papers_for_year_with_endpoint(
                 )
             })?;
 
-        let resp: CiniiResponse = serde_json::from_str(&body)
-            .with_context(|| format!("Failed to parse CiNii Research response (start={})", start))?;
+        let resp: CiniiResponse = serde_json::from_str(&body).with_context(|| {
+            format!("Failed to parse CiNii Research response (start={})", start)
+        })?;
 
         let items = resp.results();
         if items.is_empty() {
@@ -560,7 +561,9 @@ mod tests {
     #[test]
     fn abstract_allowed_only_for_allow_value() {
         assert!(abstract_allowed(&json!({"abstractLicenseFlag": "allow"})));
-        assert!(!abstract_allowed(&json!({"abstractLicenseFlag": "disallow"})));
+        assert!(!abstract_allowed(
+            &json!({"abstractLicenseFlag": "disallow"})
+        ));
         assert!(!abstract_allowed(&json!({"abstractLicenseFlag": ""})));
         assert!(!abstract_allowed(&json!({})));
     }
@@ -589,7 +592,10 @@ mod tests {
                 {"@value": "Deep Learning", "@language": "en"}
             ]
         ]);
-        assert_eq!(extract_subjects(Some(&v), "ja"), vec!["深層学習".to_string()]);
+        assert_eq!(
+            extract_subjects(Some(&v), "ja"),
+            vec!["深層学習".to_string()]
+        );
     }
 
     // [G] F-10: BOM/ゼロ幅スペースで重複レコード化を防ぐ正規化
@@ -782,9 +788,21 @@ mod tests {
             "expected cinii-specific context, got: {}",
             chain
         );
-        assert!(chain.contains("issn=1346-8030"), "issn should be in context: {}", chain);
-        assert!(chain.contains("year=2024"), "year should be in context: {}", chain);
-        assert!(chain.contains("start=1"), "start should be in context: {}", chain);
+        assert!(
+            chain.contains("issn=1346-8030"),
+            "issn should be in context: {}",
+            chain
+        );
+        assert!(
+            chain.contains("year=2024"),
+            "year should be in context: {}",
+            chain
+        );
+        assert!(
+            chain.contains("start=1"),
+            "start should be in context: {}",
+            chain
+        );
     }
 
     /// PAGE_SIZE 件分の最小valid応答を生成
@@ -927,7 +945,11 @@ mod tests {
         let endpoint = format!("{}/articles", mock_server.uri());
         let papers = run_fetch(&endpoint).await.unwrap();
         // 既知の限界：認証失敗等を区別できない．将来の仕様変更でこのテストを更新する．
-        assert_eq!(papers.len(), 0, "current behavior pinning, see F-20260503-03");
+        assert_eq!(
+            papers.len(),
+            0,
+            "current behavior pinning, see F-20260503-03"
+        );
     }
 
     #[tokio::test]
@@ -949,6 +971,10 @@ mod tests {
             "expected parse-error context, got: {}",
             chain
         );
-        assert!(chain.contains("start=1"), "start should be in context: {}", chain);
+        assert!(
+            chain.contains("start=1"),
+            "start should be in context: {}",
+            chain
+        );
     }
 }

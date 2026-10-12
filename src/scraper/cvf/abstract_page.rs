@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 
 use crate::scraper::fetch_with_sleep;
-use crate::types::{compute_id, Paper, PaperListEntry};
+use crate::types::{Paper, PaperListEntry, compute_id};
 
 /// 個別論文ページを取得してパースする
 pub async fn fetch_paper_detail(
@@ -86,11 +86,7 @@ fn get_div_text(document: &Html, selector_str: &str) -> Option<String> {
         .join(" ")
         .trim()
         .to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 /// div#authors 内の <b><i> からカンマ区切りの著者リストを取得
@@ -222,7 +218,8 @@ mod tests {
         let entry = PaperListEntry {
             title: "Meta Only Paper".to_string(),
             authors: vec!["Fallback Author".to_string()],
-            detail_url: "https://openaccess.thecvf.com/content/CVPR2023/html/paper.html".to_string(),
+            detail_url: "https://openaccess.thecvf.com/content/CVPR2023/html/paper.html"
+                .to_string(),
             track: Some("Conference".to_string()),
         };
 
@@ -240,7 +237,8 @@ mod tests {
         let entry = PaperListEntry {
             title: "Entry Title".to_string(),
             authors: vec!["Entry Author".to_string()],
-            detail_url: "https://openaccess.thecvf.com/content/CVPR2024/html/paper.html".to_string(),
+            detail_url: "https://openaccess.thecvf.com/content/CVPR2024/html/paper.html"
+                .to_string(),
             track: Some("Conference".to_string()),
         };
 

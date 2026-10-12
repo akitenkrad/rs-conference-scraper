@@ -146,10 +146,7 @@ mod tests {
         }
     }
 
-    fn make_pipeline(
-        stages: Vec<Box<dyn PaperFilter>>,
-        combine: CombineMode,
-    ) -> FilterPipeline {
+    fn make_pipeline(stages: Vec<Box<dyn PaperFilter>>, combine: CombineMode) -> FilterPipeline {
         FilterPipeline { stages, combine }
     }
 
@@ -193,8 +190,7 @@ mod tests {
 
         let results = pipeline.apply(papers);
         assert_eq!(results.len(), 2);
-        let ids: std::collections::HashSet<String> =
-            results.iter().map(|r| r.id.clone()).collect();
+        let ids: std::collections::HashSet<String> = results.iter().map(|r| r.id.clone()).collect();
         assert!(ids.contains("p1"));
         assert!(ids.contains("p2"));
     }

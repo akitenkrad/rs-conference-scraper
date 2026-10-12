@@ -16,7 +16,10 @@ pub async fn fetch_years(
 }
 
 fn parse_years(html: &str, venue_id: &str) -> Result<Vec<u16>> {
-    let re = Regex::new(&format!(r#"href="?/events/{}-(\d{{4}})/"?"#, regex::escape(venue_id)))?;
+    let re = Regex::new(&format!(
+        r#"href="?/events/{}-(\d{{4}})/"?"#,
+        regex::escape(venue_id)
+    ))?;
     let mut years: Vec<u16> = re
         .captures_iter(html)
         .filter_map(|cap| cap[1].parse::<u16>().ok())

@@ -181,9 +181,7 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
         "Found {} papers to enrich via 6-tier fallback chain",
         papers.len()
     );
-    tracing::info!(
-        "Skip reason legend: E=all_empty, R=all_error, M=mixed"
-    );
+    tracing::info!("Skip reason legend: E=all_empty, R=all_error, M=mixed");
 
     // SemanticScholar クライアント初期化
     let mut ss = SemanticScholar::new();
@@ -245,11 +243,7 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
             }
             Err(e) => {
                 tier_error_count += 1;
-                tracing::debug!(
-                    "Semantic Scholar failed for '{}': {}",
-                    paper.title,
-                    e
-                );
+                tracing::debug!("Semantic Scholar failed for '{}': {}", paper.title, e);
             }
         }
 
@@ -275,9 +269,7 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
 
         // Tier 3: arXiv（レート制限: 3秒間隔）
         // arXivプレプリントが存在しない会議（IEEE/ACM系等）ではスキップ
-        if abstract_text.is_empty()
-            && crate::conference::has_arxiv_preprints(&paper.conference)
-        {
+        if abstract_text.is_empty() && crate::conference::has_arxiv_preprints(&paper.conference) {
             pb.set_message(counts.build_msg(&ActiveTier::ArXiv));
             // arXivのレート制限を守るため3秒待つ
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
@@ -343,12 +335,8 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
         // Tier 6: PDF直接抽出（S2由来のpdf_url + paper.urlの両方を試行）
         if abstract_text.is_empty() {
             pb.set_message(counts.build_msg(&ActiveTier::Pdf));
-            match pdf::fetch_abstract_via_pdf_urls(
-                &http_client,
-                pdf_url.as_deref(),
-                &paper.url,
-            )
-            .await
+            match pdf::fetch_abstract_via_pdf_urls(&http_client, pdf_url.as_deref(), &paper.url)
+                .await
             {
                 Ok(text) if !text.is_empty() => {
                     abstract_text = text;

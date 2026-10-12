@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 
 use crate::scraper::fetch_with_sleep;
-use crate::types::{compute_id, Paper, PaperListEntry};
+use crate::types::{Paper, PaperListEntry, compute_id};
 
 pub async fn fetch_paper_detail(
     client: &reqwest::Client,
@@ -75,11 +75,7 @@ fn get_text_content(document: &Html, selector_str: &str) -> Option<String> {
         .join(" ")
         .trim()
         .to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 fn extract_authors(document: &Html) -> Vec<String> {
@@ -155,9 +151,10 @@ fn extract_abstract(document: &Html) -> String {
 fn extract_pdf_url(document: &Html) -> Option<String> {
     // Look for links ending in .pdf
     if let Ok(selector) = Selector::parse("a[href$='.pdf']")
-        && let Some(el) = document.select(&selector).next() {
-            return el.value().attr("href").map(|s| s.to_string());
-        }
+        && let Some(el) = document.select(&selector).next()
+    {
+        return el.value().attr("href").map(|s| s.to_string());
+    }
     None
 }
 

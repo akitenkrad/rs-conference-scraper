@@ -3,7 +3,7 @@ use scraper::{Html, Selector};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 
-use crate::types::{compute_id, Paper, PaperListEntry};
+use crate::types::{Paper, PaperListEntry, compute_id};
 
 /// Fetch and parse the AAMAS table of contents for a given year.
 /// Returns a list of paper entries and their full Paper objects.
@@ -13,10 +13,7 @@ pub async fn fetch_paper_list(
     year: u16,
     interval: Duration,
 ) -> Result<(Vec<PaperListEntry>, Vec<Paper>)> {
-    let url = format!(
-        "{}/Proceedings/aamas{}/forms/contents.htm",
-        base_url, year
-    );
+    let url = format!("{}/Proceedings/aamas{}/forms/contents.htm", base_url, year);
     let body = crate::scraper::fetch_with_sleep(client, &url, interval).await?;
     let proceedings_base = format!("{}/Proceedings/aamas{}", base_url, year);
     parse_contents(&body, &proceedings_base, year)
@@ -36,14 +33,10 @@ pub fn parse_contents(
     year: u16,
 ) -> Result<(Vec<PaperListEntry>, Vec<Paper>)> {
     let document = Html::parse_document(html);
-    let p_selector =
-        Selector::parse("p").expect("valid selector");
-    let a_selector =
-        Selector::parse("a").expect("valid selector");
-    let strong_selector =
-        Selector::parse("strong").expect("valid selector");
-    let i_selector =
-        Selector::parse("i").expect("valid selector");
+    let p_selector = Selector::parse("p").expect("valid selector");
+    let a_selector = Selector::parse("a").expect("valid selector");
+    let strong_selector = Selector::parse("strong").expect("valid selector");
+    let i_selector = Selector::parse("i").expect("valid selector");
 
     let mut entries = Vec::new();
     let mut papers = Vec::new();
@@ -152,10 +145,7 @@ fn resolve_pdf_url(href: &str, proceedings_base: &str) -> String {
 /// Extract author names from a <p> element.
 /// Authors appear as text nodes after <br> tags, with affiliations in <i> tags.
 /// Format: "AuthorName (Affiliation)" — we want only the name part.
-fn extract_authors(
-    p_elem: &scraper::ElementRef,
-    _i_selector: &Selector,
-) -> Vec<String> {
+fn extract_authors(p_elem: &scraper::ElementRef, _i_selector: &Selector) -> Vec<String> {
     let inner_html = p_elem.inner_html();
     let mut authors = Vec::new();
 
@@ -227,29 +217,28 @@ mod tests {
         );
 
         let (entries, papers) =
-            parse_contents(&html, "https://www.ifaamas.org/Proceedings/aamas2024", 2024)
-                .unwrap();
+            parse_contents(&html, "https://www.ifaamas.org/Proceedings/aamas2024", 2024).unwrap();
 
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].title, "Team Performance in Mixed Human-Agent Teams");
         assert_eq!(
-            entries[0].authors,
-            vec!["Sami Abuhaimed", "Sandip Sen"]
+            entries[0].title,
+            "Team Performance in Mixed Human-Agent Teams"
         );
+        assert_eq!(entries[0].authors, vec!["Sami Abuhaimed", "Sandip Sen"]);
         assert_eq!(
             entries[0].detail_url,
             "https://www.ifaamas.org/Proceedings/aamas2024/pdfs/p4.pdf"
         );
-        assert_eq!(
-            entries[0].track,
-            Some("Full Research Papers".to_string())
-        );
+        assert_eq!(entries[0].track, Some("Full Research Papers".to_string()));
 
         assert_eq!(papers.len(), 1);
         assert_eq!(papers[0].conference, "aamas");
         assert_eq!(papers[0].year, 2024);
         assert!(papers[0].r#abstract.is_empty());
-        assert_eq!(papers[0].id, compute_id("Team Performance in Mixed Human-Agent Teams"));
+        assert_eq!(
+            papers[0].id,
+            compute_id("Team Performance in Mixed Human-Agent Teams")
+        );
     }
 
     #[test]
@@ -274,8 +263,7 @@ mod tests {
         );
 
         let (entries, _papers) =
-            parse_contents(&html, "https://www.ifaamas.org/Proceedings/aamas2024", 2024)
-                .unwrap();
+            parse_contents(&html, "https://www.ifaamas.org/Proceedings/aamas2024", 2024).unwrap();
 
         assert_eq!(entries.len(), 4);
 
@@ -299,8 +287,7 @@ mod tests {
         );
 
         let (entries, _) =
-            parse_contents(&html, "https://www.ifaamas.org/Proceedings/aamas2013", 2013)
-                .unwrap();
+            parse_contents(&html, "https://www.ifaamas.org/Proceedings/aamas2013", 2013).unwrap();
 
         assert_eq!(entries.len(), 1);
         assert_eq!(
@@ -323,8 +310,7 @@ mod tests {
         );
 
         let (entries, _) =
-            parse_contents(&html, "https://www.ifaamas.org/Proceedings/aamas2024", 2024)
-                .unwrap();
+            parse_contents(&html, "https://www.ifaamas.org/Proceedings/aamas2024", 2024).unwrap();
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].title, "A Real Paper");
@@ -359,8 +345,7 @@ mod tests {
         );
 
         let (_, papers) =
-            parse_contents(&html, "https://www.ifaamas.org/Proceedings/aamas2024", 2024)
-                .unwrap();
+            parse_contents(&html, "https://www.ifaamas.org/Proceedings/aamas2024", 2024).unwrap();
 
         assert_eq!(papers.len(), 1);
         // Hash should be SHA256(title + "")

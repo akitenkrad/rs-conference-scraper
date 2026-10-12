@@ -62,10 +62,7 @@ impl ConferenceScraper for CvfScraper {
         year: u16,
     ) -> Result<Vec<PaperListEntry>> {
         // Try ?day=all first (works for 2013-2017, 2021+)
-        let url = format!(
-            "{}/{}{}?day=all",
-            self.base_url, self.conf_url_name, year
-        );
+        let url = format!("{}/{}{}?day=all", self.base_url, self.conf_url_name, year);
         let html = fetch_with_sleep(client, &url, self.interval).await?;
         let entries = list::parse_paper_list(&html, &self.base_url);
         if !entries.is_empty() {
@@ -114,9 +111,10 @@ fn extract_year_from_url(url: &str) -> Option<u16> {
             let after = after.strip_prefix('_').unwrap_or(after);
             let year_str: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
             if let Ok(year) = year_str.parse::<u16>()
-                && (2000..=2030).contains(&year) {
-                    return Some(year);
-                }
+                && (2000..=2030).contains(&year)
+            {
+                return Some(year);
+            }
             search_from = abs_pos;
         }
     }
@@ -169,10 +167,7 @@ mod tests {
 
     #[test]
     fn test_extract_year_from_url_no_match() {
-        assert_eq!(
-            extract_year_from_url("https://example.com/some/path"),
-            None
-        );
+        assert_eq!(extract_year_from_url("https://example.com/some/path"), None);
     }
 
     #[test]

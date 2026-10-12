@@ -12,7 +12,10 @@ mod tests {
         let years = available_years();
         assert_eq!(years.first(), Some(&2014));
         assert_eq!(years.last(), Some(&crate::conference::current_year()));
-        assert_eq!(years.len(), (crate::conference::current_year() - 2014 + 1) as usize);
+        assert_eq!(
+            years.len(),
+            (crate::conference::current_year() - 2014 + 1) as usize
+        );
     }
 
     #[test]

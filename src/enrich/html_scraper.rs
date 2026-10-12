@@ -52,7 +52,9 @@ pub async fn fetch_abstract_via_html(
     let document = Html::parse_document(&body);
 
     // Step 0: サイト固有パーサを試行
-    if let Some(abstract_text) = site_parsers::try_site_specific_extraction(&final_url, &body, &document) {
+    if let Some(abstract_text) =
+        site_parsers::try_site_specific_extraction(&final_url, &body, &document)
+    {
         let trimmed = abstract_text.trim().to_string();
         if trimmed.len() > 50 {
             return Ok(HtmlResult::Direct(trimmed));
@@ -74,21 +76,24 @@ pub async fn fetch_abstract_via_html(
 fn try_direct_extraction(document: &Html) -> Option<String> {
     // 1. class/idに"abstract"を含む要素（最も信頼性が高い）
     if let Some(text) = extract_abstract_element(document)
-        && text.len() > 50 {
-            return Some(text);
-        }
+        && text.len() > 50
+    {
+        return Some(text);
+    }
 
     // 2. <meta name="description"> or <meta property="og:description">
     if let Some(text) = extract_meta_description(document)
-        && text.len() > 50 {
-            return Some(text);
-        }
+        && text.len() > 50
+    {
+        return Some(text);
+    }
 
     // 3. "Abstract"見出しの後の<p>や<blockquote>
     if let Some(text) = extract_abstract_after_heading(document)
-        && text.len() > 50 {
-            return Some(text);
-        }
+        && text.len() > 50
+    {
+        return Some(text);
+    }
 
     None
 }
@@ -98,16 +103,18 @@ fn extract_meta_description(document: &Html) -> Option<String> {
     // <meta name="description" content="...">
     let sel = Selector::parse(r#"meta[name="description"]"#).ok()?;
     if let Some(el) = document.select(&sel).next()
-        && let Some(content) = el.value().attr("content") {
-            return Some(content.to_string());
-        }
+        && let Some(content) = el.value().attr("content")
+    {
+        return Some(content.to_string());
+    }
 
     // <meta property="og:description" content="...">
     let sel = Selector::parse(r#"meta[property="og:description"]"#).ok()?;
     if let Some(el) = document.select(&sel).next()
-        && let Some(content) = el.value().attr("content") {
-            return Some(content.to_string());
-        }
+        && let Some(content) = el.value().attr("content")
+    {
+        return Some(content.to_string());
+    }
 
     None
 }
@@ -158,4 +165,3 @@ fn extract_abstract_after_heading(document: &Html) -> Option<String> {
 
     None
 }
-

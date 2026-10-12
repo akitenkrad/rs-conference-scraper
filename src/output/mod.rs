@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -135,20 +135,11 @@ impl FilterOutput {
         xml.push_str("  <papers>\n");
         for p in &self.papers {
             xml.push_str("    <paper>\n");
-            xml.push_str(&format!(
-                "      <id>{}</id>\n",
-                xml_escape(&p.id)
-            ));
-            xml.push_str(&format!(
-                "      <title>{}</title>\n",
-                xml_escape(&p.title)
-            ));
+            xml.push_str(&format!("      <id>{}</id>\n", xml_escape(&p.id)));
+            xml.push_str(&format!("      <title>{}</title>\n", xml_escape(&p.title)));
             xml.push_str("      <authors>\n");
             for a in &p.authors {
-                xml.push_str(&format!(
-                    "        <author>{}</author>\n",
-                    xml_escape(a)
-                ));
+                xml.push_str(&format!("        <author>{}</author>\n", xml_escape(a)));
             }
             xml.push_str("      </authors>\n");
             xml.push_str(&format!(
@@ -160,23 +151,14 @@ impl FilterOutput {
                 xml_escape(&p.conference)
             ));
             xml.push_str(&format!("      <year>{}</year>\n", p.year));
-            xml.push_str(&format!(
-                "      <url>{}</url>\n",
-                xml_escape(&p.url)
-            ));
+            xml.push_str(&format!("      <url>{}</url>\n", xml_escape(&p.url)));
             if let Some(ref pdf) = p.pdf_url {
-                xml.push_str(&format!(
-                    "      <pdf_url>{}</pdf_url>\n",
-                    xml_escape(pdf)
-                ));
+                xml.push_str(&format!("      <pdf_url>{}</pdf_url>\n", xml_escape(pdf)));
             }
             if !p.categories.is_empty() {
                 xml.push_str("      <categories>\n");
                 for c in &p.categories {
-                    xml.push_str(&format!(
-                        "        <category>{}</category>\n",
-                        xml_escape(c)
-                    ));
+                    xml.push_str(&format!("        <category>{}</category>\n", xml_escape(c)));
                 }
                 xml.push_str("      </categories>\n");
             }
@@ -255,5 +237,4 @@ mod tests {
         assert_eq!(json["query"]["combine"], "and");
         assert_eq!(json["papers"][0]["title"], "Test Paper Title");
     }
-
 }

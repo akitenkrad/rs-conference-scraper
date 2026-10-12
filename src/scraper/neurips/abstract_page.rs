@@ -32,8 +32,9 @@ fn parse_paper_detail(
     let document = Html::parse_document(html);
 
     // Try meta tags first (preferred)
-    let title = get_meta_content(&document, "citation_title")
-        .unwrap_or_else(|| get_text_content(&document, "h4").unwrap_or_else(|| entry.title.clone()));
+    let title = get_meta_content(&document, "citation_title").unwrap_or_else(|| {
+        get_text_content(&document, "h4").unwrap_or_else(|| entry.title.clone())
+    });
 
     let authors = get_all_meta_contents(&document, "citation_author");
     let authors = if authors.is_empty() {
@@ -99,11 +100,7 @@ fn get_text_content(document: &Html, selector_str: &str) -> Option<String> {
         .collect::<Vec<_>>()
         .join(" ");
     let text = text.trim().to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 fn get_abstract(document: &Html) -> String {
@@ -141,12 +138,13 @@ fn get_abstract(document: &Html) -> String {
 
     for sel_str in &selectors {
         if let Ok(selector) = Selector::parse(sel_str)
-            && let Some(el) = document.select(&selector).next() {
-                let text = el.text().collect::<Vec<_>>().join(" ").trim().to_string();
-                if !text.is_empty() {
-                    return text;
-                }
+            && let Some(el) = document.select(&selector).next()
+        {
+            let text = el.text().collect::<Vec<_>>().join(" ").trim().to_string();
+            if !text.is_empty() {
+                return text;
             }
+        }
     }
 
     String::new()
@@ -191,7 +189,9 @@ mod tests {
         let entry = PaperListEntry {
             title: "A Great Paper".to_string(),
             authors: Vec::new(),
-            detail_url: "https://papers.neurips.cc/paper_files/paper/2023/hash/abc-Abstract-Conference.html".to_string(),
+            detail_url:
+                "https://papers.neurips.cc/paper_files/paper/2023/hash/abc-Abstract-Conference.html"
+                    .to_string(),
             track: Some("Conference".to_string()),
         };
 
@@ -298,7 +298,10 @@ mod tests {
         };
 
         let paper = parse_paper_detail(html, &entry, "neurips", 2000).unwrap();
-        assert_eq!(paper.title, "Reinforcement Learning with Function Approximation Converges to a Region");
+        assert_eq!(
+            paper.title,
+            "Reinforcement Learning with Function Approximation Converges to a Region"
+        );
         assert_eq!(paper.authors, vec!["Gordon, Geoffrey J."]);
         assert_eq!(paper.year, 2000);
         assert_eq!(paper.categories, vec!["Conference"]);

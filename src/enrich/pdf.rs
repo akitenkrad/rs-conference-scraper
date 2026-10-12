@@ -72,7 +72,11 @@ fn derive_pdf_urls(url: &str) -> Vec<String> {
     // arXiv: /abs/XXXX → /pdf/XXXX.pdf
     if url.contains("arxiv.org/abs/") {
         let pdf = url.replace("/abs/", "/pdf/");
-        let pdf = if pdf.ends_with(".pdf") { pdf } else { format!("{}.pdf", pdf) };
+        let pdf = if pdf.ends_with(".pdf") {
+            pdf
+        } else {
+            format!("{}.pdf", pdf)
+        };
         urls.push(pdf);
     }
 
@@ -122,11 +126,7 @@ async fn try_fetch_and_extract(client: &Client, url: &str) -> Result<String> {
     if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE) {
         let ct_str = ct.to_str().unwrap_or("");
         if !ct_str.contains("pdf") && !ct_str.contains("octet-stream") {
-            tracing::debug!(
-                "Skipping non-PDF content-type '{}' for '{}'",
-                ct_str,
-                url
-            );
+            tracing::debug!("Skipping non-PDF content-type '{}' for '{}'", ct_str, url);
             return Ok(String::new());
         }
     }
@@ -140,9 +140,7 @@ async fn try_fetch_and_extract(client: &Client, url: &str) -> Result<String> {
 
     let bytes_clone = bytes.to_vec();
     let extraction = tokio::task::spawn_blocking(move || {
-        std::panic::catch_unwind(|| {
-            pdf_extract::extract_text_from_mem_by_pages(&bytes_clone)
-        })
+        std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem_by_pages(&bytes_clone))
     })
     .await?;
 
@@ -169,16 +167,17 @@ async fn try_fetch_and_extract(client: &Client, url: &str) -> Result<String> {
 /// テキストから "Abstract" セクションを抽出する
 fn extract_abstract_from_text(text: &str) -> Result<String> {
     let abstract_re = Regex::new(
-        r"(?i)\babstract\b[\s\.:—\-]*\n?([\s\S]+?)(?:\n\s*(?:1[\.\s]?\s*Introduction|Keywords|Index Terms|Categories|CCS Concepts|I\.\s+INTRODUCTION)\b|\z)"
+        r"(?i)\babstract\b[\s\.:—\-]*\n?([\s\S]+?)(?:\n\s*(?:1[\.\s]?\s*Introduction|Keywords|Index Terms|Categories|CCS Concepts|I\.\s+INTRODUCTION)\b|\z)",
     )?;
 
     if let Some(caps) = abstract_re.captures(text)
-        && let Some(m) = caps.get(1) {
-            let abstract_text = normalize_pdf_text(m.as_str());
-            if abstract_text.len() > 50 {
-                return Ok(abstract_text);
-            }
+        && let Some(m) = caps.get(1)
+    {
+        let abstract_text = normalize_pdf_text(m.as_str());
+        if abstract_text.len() > 50 {
+            return Ok(abstract_text);
         }
+    }
 
     Ok(String::new())
 }
@@ -186,9 +185,7 @@ fn extract_abstract_from_text(text: &str) -> Result<String> {
 /// PDF抽出テキストの正規化（改行・空白の整理）
 fn normalize_pdf_text(text: &str) -> String {
     // ハイフネーション結合: "opti-\nmize" → "optimize"
-    let text = Regex::new(r"-\s*\n\s*")
-        .unwrap()
-        .replace_all(text, "");
+    let text = Regex::new(r"-\s*\n\s*").unwrap().replace_all(text, "");
 
     // 段落区切り（空行）を一時マーカーに置換
     let text = Regex::new(r"\n\n+")
@@ -202,9 +199,7 @@ fn normalize_pdf_text(text: &str) -> String {
     let text = text.replace("\x00PARA\x00", "\n");
 
     // 連続空白を単一スペースに
-    let text = Regex::new(r"[ \t]+")
-        .unwrap()
-        .replace_all(&text, " ");
+    let text = Regex::new(r"[ \t]+").unwrap().replace_all(&text, " ");
 
     text.trim().to_string()
 }

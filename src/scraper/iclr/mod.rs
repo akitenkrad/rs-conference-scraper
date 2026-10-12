@@ -1,6 +1,6 @@
 pub mod api;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::conference::ConferenceScraper;
-use crate::types::{compute_id, Paper, PaperListEntry};
+use crate::types::{Paper, PaperListEntry, compute_id};
 
 const DEFAULT_INTERVAL: Duration = Duration::from_millis(1500);
 

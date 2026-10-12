@@ -72,10 +72,11 @@ fn extract_year_from_url(url: &str) -> Option<u16> {
     for (i, part) in parts.iter().enumerate() {
         if *part == "paper"
             && let Some(next) = parts.get(i + 1)
-                && let Ok(year) = next.parse::<u16>()
-                    && (1980..=2030).contains(&year) {
-                        return Some(year);
-                    }
+            && let Ok(year) = next.parse::<u16>()
+            && (1980..=2030).contains(&year)
+        {
+            return Some(year);
+        }
     }
     None
 }

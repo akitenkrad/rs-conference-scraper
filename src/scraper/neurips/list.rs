@@ -160,6 +160,9 @@ mod tests {
         assert_eq!(entries[1].title, "New Style Paper");
         assert_eq!(entries[1].track, Some("Conference".to_string()));
         assert_eq!(entries[2].title, "Dataset Paper");
-        assert_eq!(entries[2].track, Some("Datasets and Benchmarks".to_string()));
+        assert_eq!(
+            entries[2].track,
+            Some("Datasets and Benchmarks".to_string())
+        );
     }
 }

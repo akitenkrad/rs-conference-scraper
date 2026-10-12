@@ -74,15 +74,16 @@ pub fn parse_paper_list(html: &str, base_url: &str) -> Vec<PaperListEntry> {
                     // Extract PDF link
                     if pdf_url.is_none()
                         && let Some(pdf_a) = dd_ref.select(&pdf_link_selector).next()
-                            && let Some(href) = pdf_a.value().attr("href") {
-                                pdf_url = Some(if href.starts_with("http") {
-                                    href.to_string()
-                                } else if href.starts_with('/') {
-                                    format!("{}{}", base_url, href)
-                                } else {
-                                    format!("{}/{}", base_url, href)
-                                });
-                            }
+                        && let Some(href) = pdf_a.value().attr("href")
+                    {
+                        pdf_url = Some(if href.starts_with("http") {
+                            href.to_string()
+                        } else if href.starts_with('/') {
+                            format!("{}{}", base_url, href)
+                        } else {
+                            format!("{}/{}", base_url, href)
+                        });
+                    }
                 }
             }
             sibling = node.next_sibling();
@@ -108,18 +109,20 @@ pub fn parse_day_links(html: &str, base_url: &str) -> Vec<String> {
     let mut day_urls = Vec::new();
     for a in document.select(&a_selector) {
         if let Some(href) = a.value().attr("href")
-            && href.contains("?day=") && href.contains(".py") {
-                let url = if href.starts_with("http") {
-                    href.to_string()
-                } else if href.starts_with('/') {
-                    format!("{}{}", base_url, href)
-                } else {
-                    format!("{}/{}", base_url, href)
-                };
-                if !day_urls.contains(&url) {
-                    day_urls.push(url);
-                }
+            && href.contains("?day=")
+            && href.contains(".py")
+        {
+            let url = if href.starts_with("http") {
+                href.to_string()
+            } else if href.starts_with('/') {
+                format!("{}{}", base_url, href)
+            } else {
+                format!("{}/{}", base_url, href)
+            };
+            if !day_urls.contains(&url) {
+                day_urls.push(url);
             }
+        }
     }
     day_urls
 }
@@ -229,7 +232,10 @@ mod tests {
 
     #[test]
     fn test_empty_html() {
-        let entries = parse_paper_list("<html><body></body></html>", "https://openaccess.thecvf.com");
+        let entries = parse_paper_list(
+            "<html><body></body></html>",
+            "https://openaccess.thecvf.com",
+        );
         assert!(entries.is_empty());
     }
 }

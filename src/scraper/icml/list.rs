@@ -47,12 +47,14 @@ fn parse_paper_list(html: &str, base_url: &str) -> Result<Vec<PaperListEntry>> {
             continue;
         }
 
-        let href = match title_link.and_then(|el| el.value().attr("href")).or_else(|| {
-            paper_el
-                .select(&links_selector)
-                .find(|el| el.text().collect::<String>().trim() == "abs")
-                .and_then(|el| el.value().attr("href"))
-        }) {
+        let href = match title_link
+            .and_then(|el| el.value().attr("href"))
+            .or_else(|| {
+                paper_el
+                    .select(&links_selector)
+                    .find(|el| el.text().collect::<String>().trim() == "abs")
+                    .and_then(|el| el.value().attr("href"))
+            }) {
             Some(h) => h,
             None => continue,
         };
@@ -81,12 +83,7 @@ fn parse_paper_list(html: &str, base_url: &str) -> Result<Vec<PaperListEntry>> {
         // Extract PDF URL from links
         let pdf_url = paper_el
             .select(&links_selector)
-            .find(|el| {
-                el.text()
-                    .collect::<Vec<_>>()
-                    .join("")
-                    .contains("PDF")
-            })
+            .find(|el| el.text().collect::<Vec<_>>().join("").contains("PDF"))
             .and_then(|el| el.value().attr("href"))
             .map(|url| url.to_string());
 

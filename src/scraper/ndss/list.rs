@@ -221,8 +221,7 @@ mod tests {
         </body></html>
         "#;
 
-        let entries =
-            parse_paper_list(html, "https://www.ndss-symposium.org").unwrap();
+        let entries = parse_paper_list(html, "https://www.ndss-symposium.org").unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].title, "Paper One Title");
         assert_eq!(entries[0].authors, vec!["Alice Smith", "Bob Jones"]);
@@ -247,8 +246,7 @@ mod tests {
         </body></html>
         "#;
 
-        let entries =
-            parse_paper_list(html, "https://www.ndss-symposium.org").unwrap();
+        let entries = parse_paper_list(html, "https://www.ndss-symposium.org").unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].title, "My Paper Title");
         assert_eq!(
@@ -280,24 +278,20 @@ mod tests {
         </body></html>
         "#;
 
-        let entries =
-            parse_paper_list(html, "https://www.ndss-symposium.org").unwrap();
+        let entries = parse_paper_list(html, "https://www.ndss-symposium.org").unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].title, "Real Paper");
     }
 
     #[test]
     fn test_parse_authors() {
-        let authors =
-            parse_authors("Alice Smith (MIT), Bob Jones (Stanford), Charlie Brown (CMU)");
+        let authors = parse_authors("Alice Smith (MIT), Bob Jones (Stanford), Charlie Brown (CMU)");
         assert_eq!(authors, vec!["Alice Smith", "Bob Jones", "Charlie Brown"]);
     }
 
     #[test]
     fn test_parse_authors_with_and() {
-        let authors = parse_authors(
-            "Alice Smith (MIT) and Bob Jones (Stanford)",
-        );
+        let authors = parse_authors("Alice Smith (MIT) and Bob Jones (Stanford)");
         assert_eq!(authors, vec!["Alice Smith", "Bob Jones"]);
     }
 

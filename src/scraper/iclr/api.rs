@@ -1,10 +1,10 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::types::{compute_id, Paper};
+use crate::types::{Paper, compute_id};
 
 // ---------------------------------------------------------------------------
 // OpenReview API v2 (ICLR 2024+)
@@ -133,7 +133,6 @@ const API_V1_BASE: &str = "https://api.openreview.net";
 const API_V2_BASE: &str = "https://api2.openreview.net";
 const PAGE_LIMIT: u64 = 1000;
 
-
 fn compute_hash(title: &str, abstract_text: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(title.as_bytes());
@@ -195,18 +194,12 @@ pub async fn fetch_papers_for_year(
         2019 => fetch_v1_legacy_2019(client, interval).await,
         2020..=2023 => fetch_v1(client, API_V1_BASE, year, interval).await,
         2024.. => fetch_v2(client, API_V2_BASE, year, interval).await,
-        _ => bail!(
-            "ICLR scraping for year {} is not supported",
-            year
-        ),
+        _ => bail!("ICLR scraping for year {} is not supported", year),
     }
 }
 
 /// ICLR 2018の採択論文を取得する．決定ノートと投稿を別々に取得し，マッチングする．
-async fn fetch_v1_legacy_2018(
-    client: &reqwest::Client,
-    interval: Duration,
-) -> Result<Vec<Paper>> {
+async fn fetch_v1_legacy_2018(client: &reqwest::Client, interval: Duration) -> Result<Vec<Paper>> {
     // Step 1: Fetch all decision notes
     let mut decisions: HashMap<String, String> = HashMap::new();
     let mut offset: u64 = 0;
@@ -287,10 +280,7 @@ async fn fetch_v1_legacy_2018(
 }
 
 /// ICLR 2019の採択論文を取得する．投稿のdirectRepliesからMeta_Reviewを探して判定する．
-async fn fetch_v1_legacy_2019(
-    client: &reqwest::Client,
-    interval: Duration,
-) -> Result<Vec<Paper>> {
+async fn fetch_v1_legacy_2019(client: &reqwest::Client, interval: Duration) -> Result<Vec<Paper>> {
     let mut papers = Vec::new();
     let mut offset: u64 = 0;
 
@@ -309,32 +299,34 @@ async fn fetch_v1_legacy_2019(
 
         for note in body.notes {
             if let Some(details) = &note.details {
-                let meta_review = details.direct_replies.iter().find(|r| {
-                    r.invitation.ends_with("/Meta_Review")
-                });
+                let meta_review = details
+                    .direct_replies
+                    .iter()
+                    .find(|r| r.invitation.ends_with("/Meta_Review"));
 
                 if let Some(review) = meta_review
                     && let Some(ref rec) = review.content.recommendation
-                        && rec.starts_with("Accept") {
-                            let title = note.content.title.clone();
-                            let authors = note.content.authors.clone().unwrap_or_default();
-                            let abstract_text = note.content.r#abstract.clone().unwrap_or_default();
-                            let pdf_path = note.content.pdf.clone();
-                            let category = extract_legacy_category(rec);
+                    && rec.starts_with("Accept")
+                {
+                    let title = note.content.title.clone();
+                    let authors = note.content.authors.clone().unwrap_or_default();
+                    let abstract_text = note.content.r#abstract.clone().unwrap_or_default();
+                    let pdf_path = note.content.pdf.clone();
+                    let category = extract_legacy_category(rec);
 
-                            papers.push(Paper {
-                                id: compute_id(&title),
-                                conference: "iclr".to_string(),
-                                year: 2019,
-                                title: title.clone(),
-                                authors,
-                                r#abstract: abstract_text.clone(),
-                                url: build_paper_url(&note.forum),
-                                pdf_url: build_pdf_url(pdf_path.as_deref()),
-                                categories: vec![category],
-                                hash: compute_hash(&title, &abstract_text),
-                            });
-                        }
+                    papers.push(Paper {
+                        id: compute_id(&title),
+                        conference: "iclr".to_string(),
+                        year: 2019,
+                        title: title.clone(),
+                        authors,
+                        r#abstract: abstract_text.clone(),
+                        url: build_paper_url(&note.forum),
+                        pdf_url: build_pdf_url(pdf_path.as_deref()),
+                        categories: vec![category],
+                        hash: compute_hash(&title, &abstract_text),
+                    });
+                }
             }
         }
 
@@ -375,16 +367,8 @@ async fn fetch_v2(
 
         for note in body.notes {
             let title = note.content.title.value;
-            let authors = note
-                .content
-                .authors
-                .map(|a| a.value)
-                .unwrap_or_default();
-            let abstract_text = note
-                .content
-                .r#abstract
-                .map(|a| a.value)
-                .unwrap_or_default();
+            let authors = note.content.authors.map(|a| a.value).unwrap_or_default();
+            let abstract_text = note.content.r#abstract.map(|a| a.value).unwrap_or_default();
             let pdf_path = note.content.pdf.map(|p| p.value);
             let venue = note.content.venue.map(|v| v.value);
 
@@ -408,7 +392,6 @@ async fn fetch_v2(
         if page_len == 0 || offset >= total {
             break;
         }
-
     }
 
     Ok(papers)
@@ -465,7 +448,6 @@ async fn fetch_v1(
         if page_len == 0 || offset >= total {
             break;
         }
-
     }
 
     Ok(papers)
@@ -572,10 +554,7 @@ mod tests {
             note.content.r#abstract.as_ref().unwrap().value,
             "This paper does great things."
         );
-        assert_eq!(
-            note.content.pdf.as_ref().unwrap().value,
-            "/pdf/abc123.pdf"
-        );
+        assert_eq!(note.content.pdf.as_ref().unwrap().value, "/pdf/abc123.pdf");
         assert_eq!(
             note.content.venue.as_ref().unwrap().value,
             "ICLR 2024 poster"
@@ -694,10 +673,7 @@ mod tests {
     fn test_extract_category() {
         assert_eq!(extract_category(Some("ICLR 2024 poster")), "poster");
         assert_eq!(extract_category(Some("ICLR 2024 oral")), "oral");
-        assert_eq!(
-            extract_category(Some("ICLR 2024 Spotlight")),
-            "spotlight"
-        );
+        assert_eq!(extract_category(Some("ICLR 2024 Spotlight")), "spotlight");
         assert_eq!(extract_category(Some("ICLR 2024")), "Conference");
         assert_eq!(extract_category(None), "Conference");
     }
@@ -722,10 +698,7 @@ mod tests {
         );
         // Fallback for unknown accept format
         assert_eq!(extract_legacy_category("Accept"), "poster");
-        assert_eq!(
-            extract_legacy_category("Accept (Spotlight)"),
-            "poster"
-        );
+        assert_eq!(extract_legacy_category("Accept (Spotlight)"), "poster");
     }
 
     #[test]

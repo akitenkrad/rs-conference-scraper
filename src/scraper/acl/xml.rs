@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sha2::{Digest, Sha256};
 
-use crate::types::{compute_id, Paper, PaperListEntry};
+use crate::types::{Paper, PaperListEntry, compute_id};
 
 /// Parsed result from ACL XML containing both list entries and full paper details.
 pub struct ParsedPapers {
@@ -91,17 +91,15 @@ pub fn parse_xml(xml: &str, conference: &str, year: u16) -> Result<ParsedPapers>
 }
 
 fn get_child_text(node: &roxmltree::Node, tag: &str) -> Option<String> {
-    node.children()
-        .find(|n| n.has_tag_name(tag))
-        .map(|n| {
-            n.descendants()
-                .filter(|d| d.is_text())
-                .map(|d| d.text().unwrap_or(""))
-                .collect::<Vec<_>>()
-                .join("")
-                .trim()
-                .to_string()
-        })
+    node.children().find(|n| n.has_tag_name(tag)).map(|n| {
+        n.descendants()
+            .filter(|d| d.is_text())
+            .map(|d| d.text().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("")
+            .trim()
+            .to_string()
+    })
 }
 
 fn get_authors(node: &roxmltree::Node) -> Vec<String> {
@@ -111,11 +109,7 @@ fn get_authors(node: &roxmltree::Node) -> Vec<String> {
             let first = get_child_text(&author, "first").unwrap_or_default();
             let last = get_child_text(&author, "last").unwrap_or_default();
             let name = format!("{} {}", first, last).trim().to_string();
-            if name.is_empty() {
-                None
-            } else {
-                Some(name)
-            }
+            if name.is_empty() { None } else { Some(name) }
         })
         .collect()
 }

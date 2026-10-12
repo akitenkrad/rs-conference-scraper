@@ -32,8 +32,8 @@ fn parse_paper_detail(
     let document = Html::parse_document(html);
 
     // Extract title: prefer meta tag, fallback to entry title
-    let title = get_meta_content(&document, "citation_title")
-        .unwrap_or_else(|| entry.title.clone());
+    let title =
+        get_meta_content(&document, "citation_title").unwrap_or_else(|| entry.title.clone());
 
     // Extract authors: prefer meta tags, fallback to entry authors
     let authors = get_all_meta_contents(&document, "citation_author");
@@ -52,11 +52,7 @@ fn parse_paper_detail(
     let id = compute_sha256(&title);
     let hash = compute_sha256(&format!("{}{}", title, abstract_text));
 
-    let categories: Vec<String> = entry
-        .track
-        .clone()
-        .into_iter()
-        .collect();
+    let categories: Vec<String> = entry.track.clone().into_iter().collect();
 
     Ok(Paper {
         id,
@@ -99,24 +95,21 @@ fn get_abstract(document: &Html) -> String {
 
     for sel_str in &selectors {
         if let Ok(selector) = Selector::parse(sel_str)
-            && let Some(el) = document.select(&selector).next() {
-                let text = el
-                    .text()
-                    .collect::<Vec<_>>()
-                    .join(" ")
-                    .trim()
-                    .to_string();
-                if !text.is_empty() {
-                    return text;
-                }
+            && let Some(el) = document.select(&selector).next()
+        {
+            let text = el.text().collect::<Vec<_>>().join(" ").trim().to_string();
+            if !text.is_empty() {
+                return text;
             }
+        }
     }
 
     // Fallback: try meta tag
     if let Some(abstract_text) = get_meta_content(document, "citation_abstract")
-        && !abstract_text.is_empty() {
-            return abstract_text;
-        }
+        && !abstract_text.is_empty()
+    {
+        return abstract_text;
+    }
 
     String::new()
 }
@@ -150,7 +143,10 @@ mod tests {
         assert_eq!(paper.authors, vec!["Jared Kaplan", "Sam McCandlish"]);
         assert_eq!(
             paper.pdf_url,
-            Some("https://raw.githubusercontent.com/mlresearch/v235/main/assets/paper.pdf".to_string())
+            Some(
+                "https://raw.githubusercontent.com/mlresearch/v235/main/assets/paper.pdf"
+                    .to_string()
+            )
         );
         assert_eq!(
             paper.r#abstract,
@@ -182,10 +178,7 @@ mod tests {
         assert_eq!(paper.title, "Fallback Paper Title");
         assert_eq!(paper.authors, vec!["Author A", "Author B"]);
         assert_eq!(paper.pdf_url, None);
-        assert_eq!(
-            paper.r#abstract,
-            "Abstract from class-based selector."
-        );
+        assert_eq!(paper.r#abstract, "Abstract from class-based selector.");
         assert_eq!(paper.year, 2023);
     }
 

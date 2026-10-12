@@ -32,8 +32,7 @@ fn parse_paper_detail(
     let document = Html::parse_document(html);
 
     // Title: from <h1> on the page, fallback to entry title
-    let title = get_text_content(&document, "h1")
-        .unwrap_or_else(|| entry.title.clone());
+    let title = get_text_content(&document, "h1").unwrap_or_else(|| entry.title.clone());
 
     // Authors: from paper-data div (first <p> with <strong>), fallback to entry authors
     let authors = get_authors(&document).unwrap_or_else(|| entry.authors.clone());
@@ -73,11 +72,7 @@ fn get_text_content(document: &Html, selector_str: &str) -> Option<String> {
         .collect::<Vec<_>>()
         .join(" ");
     let text = text.trim().to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 fn get_authors(document: &Html) -> Option<Vec<String>> {
@@ -99,12 +94,7 @@ fn get_authors(document: &Html) -> Option<Vec<String>> {
     // Scan all <p> elements in paper-data and find one that looks like an author list
     // (contains parenthesized affiliations and is not too long to be an abstract)
     for p_el in paper_data.select(&p_selector) {
-        let raw = p_el
-            .text()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .trim()
-            .to_string();
+        let raw = p_el.text().collect::<Vec<_>>().join(" ").trim().to_string();
         if raw.is_empty() {
             continue;
         }
@@ -126,44 +116,41 @@ fn get_abstract(document: &Html) -> String {
     // paragraph that is not inside <strong> and is longer than a threshold.
     if let Ok(selector) = Selector::parse("div.paper-data")
         && let Some(paper_data) = document.select(&selector).next()
-            && let Ok(p_sel) = Selector::parse("p") {
-                let paragraphs: Vec<String> = paper_data
-                    .select(&p_sel)
-                    .map(|p| p.text().collect::<Vec<_>>().join(" ").trim().to_string())
-                    .filter(|t| !t.is_empty())
-                    .collect();
+        && let Ok(p_sel) = Selector::parse("p")
+    {
+        let paragraphs: Vec<String> = paper_data
+            .select(&p_sel)
+            .map(|p| p.text().collect::<Vec<_>>().join(" ").trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
 
-                // The abstract is typically the longest paragraph
-                // Skip short entries that are likely author lines
-                for p in paragraphs.iter().rev() {
-                    // Abstract paragraphs are usually > 100 chars
-                    if p.len() > 100 {
-                        return p.clone();
-                    }
-                }
-
-                // If all paragraphs are short, try the last one that isn't an author line
-                if paragraphs.len() > 1 {
-                    return paragraphs.last().unwrap_or(&String::new()).clone();
-                }
+        // The abstract is typically the longest paragraph
+        // Skip short entries that are likely author lines
+        for p in paragraphs.iter().rev() {
+            // Abstract paragraphs are usually > 100 chars
+            if p.len() > 100 {
+                return p.clone();
             }
+        }
+
+        // If all paragraphs are short, try the last one that isn't an author line
+        if paragraphs.len() > 1 {
+            return paragraphs.last().unwrap_or(&String::new()).clone();
+        }
+    }
 
     // Fallback: look for common abstract selectors
-    let selectors = [
-        "div.abstract",
-        "p.abstract",
-        "div#abstract",
-        "blockquote",
-    ];
+    let selectors = ["div.abstract", "p.abstract", "div#abstract", "blockquote"];
 
     for sel_str in &selectors {
         if let Ok(selector) = Selector::parse(sel_str)
-            && let Some(el) = document.select(&selector).next() {
-                let text = el.text().collect::<Vec<_>>().join(" ").trim().to_string();
-                if !text.is_empty() {
-                    return text;
-                }
+            && let Some(el) = document.select(&selector).next()
+        {
+            let text = el.text().collect::<Vec<_>>().join(" ").trim().to_string();
+            if !text.is_empty() {
+                return text;
             }
+        }
     }
 
     String::new()
@@ -173,17 +160,20 @@ fn get_pdf_url(document: &Html) -> Option<String> {
     // Look for .pdf-button link first
     if let Ok(selector) = Selector::parse("a.pdf-button")
         && let Some(el) = document.select(&selector).next()
-            && let Some(href) = el.value().attr("href") {
-                return Some(href.to_string());
-            }
+        && let Some(href) = el.value().attr("href")
+    {
+        return Some(href.to_string());
+    }
 
     // Fallback: any link to a .pdf file in wp-content/uploads
     if let Ok(selector) = Selector::parse("a[href*='wp-content/uploads']") {
         for el in document.select(&selector) {
             if let Some(href) = el.value().attr("href")
-                && href.ends_with(".pdf") && !href.contains("slides") {
-                    return Some(href.to_string());
-                }
+                && href.ends_with(".pdf")
+                && !href.contains("slides")
+            {
+                return Some(href.to_string());
+            }
         }
     }
 

@@ -9,7 +9,7 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::time::Instant;
 
 use crate::cache::CacheDb;
-use crate::cli::{parse_year_range, SyncArgs};
+use crate::cli::{SyncArgs, parse_year_range};
 use crate::conference;
 use crate::scraper::build_http_client;
 use crate::types::compute_id;
@@ -368,7 +368,10 @@ mod tests {
         assert!(incomplete_result("ePrint", &[]).is_ok());
         let err = incomplete_result(
             "ePrint",
-            &["2008 (paper list: HTTP 429)".into(), "2009 (3 of 500 papers failed)".into()],
+            &[
+                "2008 (paper list: HTTP 429)".into(),
+                "2009 (3 of 500 papers failed)".into(),
+            ],
         )
         .unwrap_err()
         .to_string();

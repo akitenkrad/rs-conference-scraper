@@ -81,10 +81,7 @@ mod tests {
 
     #[test]
     fn keyword_matches_in_title() {
-        let filter = KeywordFilter::new(
-            &["transformer".to_string()],
-            &both_fields(),
-        );
+        let filter = KeywordFilter::new(&["transformer".to_string()], &both_fields());
         let paper = make_paper("A Transformer Model", "Nothing relevant here");
         match filter.score(&paper) {
             FilterScore::Numeric(v) => assert!(v > 0.0),
@@ -94,10 +91,7 @@ mod tests {
 
     #[test]
     fn keyword_matches_in_abstract() {
-        let filter = KeywordFilter::new(
-            &["attention".to_string()],
-            &both_fields(),
-        );
+        let filter = KeywordFilter::new(&["attention".to_string()], &both_fields());
         let paper = make_paper("Some Title", "We use attention mechanisms");
         match filter.score(&paper) {
             FilterScore::Numeric(v) => assert!(v > 0.0),
@@ -107,10 +101,7 @@ mod tests {
 
     #[test]
     fn case_insensitive_matching() {
-        let filter = KeywordFilter::new(
-            &["TRANSFORMER".to_string()],
-            &both_fields(),
-        );
+        let filter = KeywordFilter::new(&["TRANSFORMER".to_string()], &both_fields());
         let paper = make_paper("a transformer model", "");
         match filter.score(&paper) {
             FilterScore::Numeric(v) => assert!(v > 0.0),
@@ -140,10 +131,7 @@ mod tests {
 
     #[test]
     fn no_match_returns_zero() {
-        let filter = KeywordFilter::new(
-            &["quantum".to_string()],
-            &both_fields(),
-        );
+        let filter = KeywordFilter::new(&["quantum".to_string()], &both_fields());
         let paper = make_paper("Neural Networks", "Deep learning study");
         match filter.score(&paper) {
             FilterScore::Numeric(v) => assert_eq!(v, 0.0),
@@ -157,7 +145,10 @@ mod tests {
             &["transformer".to_string(), "attention".to_string()],
             &both_fields(),
         );
-        let paper = make_paper("Transformer with Attention", "Uses attention in transformer");
+        let paper = make_paper(
+            "Transformer with Attention",
+            "Uses attention in transformer",
+        );
         match filter.score(&paper) {
             FilterScore::Numeric(v) => assert_eq!(v, 1.0),
             _ => panic!("Expected Numeric score"),
@@ -166,10 +157,7 @@ mod tests {
 
     #[test]
     fn fields_restriction_title_only() {
-        let filter = KeywordFilter::new(
-            &["attention".to_string()],
-            &["title".to_string()],
-        );
+        let filter = KeywordFilter::new(&["attention".to_string()], &["title".to_string()]);
         // keyword only in abstract, not title
         let paper = make_paper("Some Title", "Uses attention mechanisms");
         match filter.score(&paper) {
@@ -180,10 +168,7 @@ mod tests {
 
     #[test]
     fn fields_restriction_abstract_only() {
-        let filter = KeywordFilter::new(
-            &["transformer".to_string()],
-            &["abstract".to_string()],
-        );
+        let filter = KeywordFilter::new(&["transformer".to_string()], &["abstract".to_string()]);
         // keyword only in title, not abstract
         let paper = make_paper("Transformer Model", "Nothing here");
         match filter.score(&paper) {

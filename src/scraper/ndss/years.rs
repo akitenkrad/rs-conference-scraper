@@ -20,7 +20,10 @@ mod tests {
     #[test]
     fn test_available_years_count() {
         let years = available_years();
-        assert_eq!(years.len(), (crate::conference::current_year() - 2014 + 1) as usize);
+        assert_eq!(
+            years.len(),
+            (crate::conference::current_year() - 2014 + 1) as usize
+        );
     }
 
     #[test]

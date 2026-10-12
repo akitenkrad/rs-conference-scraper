@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::time::Duration;
 
 use crate::scraper::fetch_with_sleep;
-use crate::types::{compute_id, Paper};
+use crate::types::{Paper, compute_id};
 
 use super::api::{clean_title, compute_hash};
 
@@ -35,8 +35,7 @@ pub async fn fetch_papers_xml(
 
 /// BHT XML をパースして Paper のベクタを返す
 fn parse_bht_xml(xml: &str, conf_id: &str) -> Result<Vec<Paper>> {
-    let doc = roxmltree::Document::parse(xml)
-        .with_context(|| "Failed to parse DBLP BHT XML")?;
+    let doc = roxmltree::Document::parse(xml).with_context(|| "Failed to parse DBLP BHT XML")?;
 
     let mut papers = Vec::new();
 
@@ -81,11 +80,10 @@ fn parse_inproceedings(node: &roxmltree::Node, conf_id: &str) -> Option<Paper> {
             }
             "ee" => {
                 // 最初の <ee> のみ使用
-                if !ee_found
-                    && let Some(text) = child.text() {
-                        ee_url = text.trim().to_string();
-                        ee_found = true;
-                    }
+                if !ee_found && let Some(text) = child.text() {
+                    ee_url = text.trim().to_string();
+                    ee_found = true;
+                }
             }
             _ => {}
         }
@@ -186,14 +184,14 @@ mod tests {
         assert_eq!(p.title, "On SMS Phishing Tactics and Infrastructure");
         assert_eq!(p.conference, "sp");
         assert_eq!(p.year, 2024);
-        assert_eq!(
-            p.authors,
-            vec!["Aleksandr Nahapetyan", "Sathvik Prasad"]
-        );
+        assert_eq!(p.authors, vec!["Aleksandr Nahapetyan", "Sathvik Prasad"]);
         assert_eq!(p.url, "https://doi.org/10.1109/SP54263.2024.00169");
         assert!(p.pdf_url.is_none());
         assert!(p.r#abstract.is_empty());
-        assert_eq!(p.id, compute_id("On SMS Phishing Tactics and Infrastructure"));
+        assert_eq!(
+            p.id,
+            compute_id("On SMS Phishing Tactics and Infrastructure")
+        );
     }
 
     #[test]

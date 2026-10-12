@@ -77,13 +77,14 @@ fn extract_year_from_url(url: &str) -> Option<u16> {
     let parts: Vec<&str> = url.split('/').collect();
     for part in &parts {
         if let Some(yy_str) = part.strip_prefix("usenixsecurity")
-            && let Ok(yy) = yy_str.parse::<u16>() {
-                // Convert 2-digit year to 4-digit
-                if yy < 100 {
-                    return Some(2000 + yy);
-                }
-                return Some(yy);
+            && let Ok(yy) = yy_str.parse::<u16>()
+        {
+            // Convert 2-digit year to 4-digit
+            if yy < 100 {
+                return Some(2000 + yy);
             }
+            return Some(yy);
+        }
     }
     None
 }
@@ -106,10 +107,7 @@ mod tests {
             ),
             Some(2014)
         );
-        assert_eq!(
-            extract_year_from_url("https://www.usenix.org/about"),
-            None
-        );
+        assert_eq!(extract_year_from_url("https://www.usenix.org/about"), None);
     }
 
     #[test]

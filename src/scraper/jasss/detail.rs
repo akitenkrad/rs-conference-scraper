@@ -3,7 +3,7 @@ use scraper::{Html, Selector};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 
-use crate::types::{compute_id, Paper, PaperListEntry};
+use crate::types::{Paper, PaperListEntry, compute_id};
 
 /// 論文詳細ページから Paper を構築
 pub async fn fetch_paper_detail(
@@ -12,8 +12,7 @@ pub async fn fetch_paper_detail(
     year: u16,
     interval: Duration,
 ) -> Result<Paper> {
-    let body =
-        crate::scraper::fetch_with_sleep(client, &entry.detail_url, interval).await?;
+    let body = crate::scraper::fetch_with_sleep(client, &entry.detail_url, interval).await?;
     parse_detail(&body, entry, year)
 }
 
@@ -137,9 +136,7 @@ fn extract_abstract_from_html(document: &Html) -> Option<String> {
                 let tag = elem_ref.value().name();
                 // <dl>, <p>, <div> のいずれかからテキストを抽出
                 if tag == "dl" || tag == "p" || tag == "div" {
-                    let abstract_text = elem_ref
-                        .text()
-                        .collect::<String>();
+                    let abstract_text = elem_ref.text().collect::<String>();
                     let cleaned = clean_abstract_text(&abstract_text);
                     if !cleaned.is_empty() {
                         return Some(cleaned);
@@ -212,10 +209,7 @@ mod tests {
             paper.pdf_url,
             Some("https://www.jasss.org/29/1/7/7.pdf".to_string())
         );
-        assert_eq!(
-            paper.categories,
-            vec!["simulation", "agents", "modeling"]
-        );
+        assert_eq!(paper.categories, vec!["simulation", "agents", "modeling"]);
         assert_eq!(paper.conference, "jasss");
         assert_eq!(paper.year, 2026);
     }
@@ -245,7 +239,10 @@ mod tests {
         let paper = parse_detail(html, &entry, 1998).unwrap();
 
         assert_eq!(paper.title, "Old Paper");
-        assert_eq!(paper.r#abstract, "This is the abstract text from the HTML body.");
+        assert_eq!(
+            paper.r#abstract,
+            "This is the abstract text from the HTML body."
+        );
         assert_eq!(paper.authors, vec!["Jim Doran"]);
     }
 
@@ -268,7 +265,10 @@ mod tests {
     fn test_extract_meta() {
         let html = r#"<html><head><meta name="DC.Title" content="Hello World"></head></html>"#;
         let doc = Html::parse_document(html);
-        assert_eq!(extract_meta(&doc, "DC.Title"), Some("Hello World".to_string()));
+        assert_eq!(
+            extract_meta(&doc, "DC.Title"),
+            Some("Hello World".to_string())
+        );
         assert_eq!(extract_meta(&doc, "DC.Abstract"), None);
     }
 }

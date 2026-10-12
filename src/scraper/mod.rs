@@ -17,7 +17,10 @@ pub(crate) fn redact_url(url: &str) -> String {
         .query_pairs()
         .map(|(k, v)| {
             let key = k.into_owned();
-            let value = if SENSITIVE_QUERY_PARAMS.iter().any(|s| s.eq_ignore_ascii_case(&key)) {
+            let value = if SENSITIVE_QUERY_PARAMS
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(&key))
+            {
                 "***".to_string()
             } else {
                 v.into_owned()
@@ -51,9 +54,7 @@ pub fn build_http_client() -> Result<reqwest::Client> {
     let mut headers = HeaderMap::new();
     headers.insert(
         "Accept",
-        HeaderValue::from_static(
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        ),
+        HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
     );
     headers.insert(
         "Accept-Language",
@@ -210,7 +211,8 @@ pub(crate) async fn fetch_with_policy(
                     return Err(challenge_error(kind, status, &safe_url));
                 }
                 let throttled = status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                    || (status == reqwest::StatusCode::SERVICE_UNAVAILABLE && retry_after.is_some());
+                    || (status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+                        && retry_after.is_some());
                 if throttled {
                     throttles += 1;
                     if throttles as usize > policy.throttle_retries {
@@ -266,9 +268,21 @@ mod tests {
     fn redact_url_masks_appid_value() {
         let url = "https://cir.nii.ac.jp/opensearch/v2/articles?appid=SECRET-CREDENTIAL&issn=1346-8030&from=2024";
         let got = redact_url(url);
-        assert!(!got.contains("SECRET-CREDENTIAL"), "appid value leaked: {}", got);
-        assert!(got.contains("appid=***"), "expected appid=***, got: {}", got);
-        assert!(got.contains("issn=1346-8030"), "non-sensitive param dropped: {}", got);
+        assert!(
+            !got.contains("SECRET-CREDENTIAL"),
+            "appid value leaked: {}",
+            got
+        );
+        assert!(
+            got.contains("appid=***"),
+            "expected appid=***, got: {}",
+            got
+        );
+        assert!(
+            got.contains("issn=1346-8030"),
+            "non-sensitive param dropped: {}",
+            got
+        );
     }
 
     #[test]
@@ -287,8 +301,16 @@ mod tests {
         // URLの再エンコード（`:` → `%3A` 等）は許容する．契約は「機密パラメータ以外の値が改変されない」こと．
         let url = "https://api.openalex.org/works?filter=issn:1046-8781&per_page=200";
         let got = redact_url(url);
-        assert!(got.contains("1046-8781"), "non-sensitive value lost: {}", got);
-        assert!(got.contains("per_page=200"), "non-sensitive param lost: {}", got);
+        assert!(
+            got.contains("1046-8781"),
+            "non-sensitive value lost: {}",
+            got
+        );
+        assert!(
+            got.contains("per_page=200"),
+            "non-sensitive param lost: {}",
+            got
+        );
         assert!(!got.contains("***"), "no masking should happen: {}", got);
     }
 
@@ -340,14 +362,25 @@ mod tests {
         let json = r#"{"name":"ChallengeRequiredError","message":"Challenge verification required","status":403}"#;
         assert_eq!(detect_bot_challenge(json), Some("OpenReview"));
         // 論文の JSON にその語が題として出ても，name でなければ拾わない
-        assert_eq!(detect_bot_challenge(r#"{"notes": [{"title": "ChallengeRequiredError in practice"}]}"#), None);
+        assert_eq!(
+            detect_bot_challenge(r#"{"notes": [{"title": "ChallengeRequiredError in practice"}]}"#),
+            None
+        );
     }
 
     #[test]
     fn ordinary_pages_are_not_challenges() {
-        assert_eq!(detect_bot_challenge("<html><head><title>IACR ePrint 2024</title></head></html>"), None);
+        assert_eq!(
+            detect_bot_challenge("<html><head><title>IACR ePrint 2024</title></head></html>"),
+            None
+        );
         // DBLP の XML に同じ題の論文があっても HTML 文書でなければ拾わない
-        assert_eq!(detect_bot_challenge("<?xml version=\"1.0\"?><dblp><title>Just a moment...</title></dblp>"), None);
+        assert_eq!(
+            detect_bot_challenge(
+                "<?xml version=\"1.0\"?><dblp><title>Just a moment...</title></dblp>"
+            ),
+            None
+        );
         assert_eq!(detect_bot_challenge("{\"result\": {}}"), None);
         assert_eq!(detect_bot_challenge(""), None);
     }
@@ -358,8 +391,14 @@ mod tests {
         assert_eq!(p.throttle_wait(1, None), Duration::from_secs(15));
         assert_eq!(p.throttle_wait(3, None), Duration::from_secs(60));
         assert_eq!(p.throttle_wait(5, None), Duration::from_secs(120));
-        assert_eq!(p.throttle_wait(1, Some(Duration::from_secs(42))), Duration::from_secs(42));
-        assert_eq!(p.throttle_wait(1, Some(Duration::from_secs(3600))), Duration::from_secs(120));
+        assert_eq!(
+            p.throttle_wait(1, Some(Duration::from_secs(42))),
+            Duration::from_secs(42)
+        );
+        assert_eq!(
+            p.throttle_wait(1, Some(Duration::from_secs(3600))),
+            Duration::from_secs(120)
+        );
         // 通常の失敗の待ちは従来どおり 2, 4, 8 秒
         assert_eq!(p.backoff(1), Duration::from_secs(2));
         assert_eq!(p.backoff(3), Duration::from_secs(8));
@@ -368,15 +407,21 @@ mod tests {
     #[test]
     fn parses_retry_after_seconds_only() {
         let mut h = reqwest::header::HeaderMap::new();
-        h.insert(reqwest::header::RETRY_AFTER, HeaderValue::from_static(" 30 "));
+        h.insert(
+            reqwest::header::RETRY_AFTER,
+            HeaderValue::from_static(" 30 "),
+        );
         assert_eq!(parse_retry_after(&h), Some(Duration::from_secs(30)));
-        h.insert(reqwest::header::RETRY_AFTER, HeaderValue::from_static("Wed, 21 Oct 2026 07:28:00 GMT"));
+        h.insert(
+            reqwest::header::RETRY_AFTER,
+            HeaderValue::from_static("Wed, 21 Oct 2026 07:28:00 GMT"),
+        );
         assert_eq!(parse_retry_after(&h), None);
     }
 
     #[tokio::test]
     async fn retries_after_429_until_success() {
-        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
@@ -396,14 +441,17 @@ mod tests {
 
     #[tokio::test]
     async fn gives_up_after_throttle_retries() {
-        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(429))
             .mount(&server)
             .await;
 
-        let err = fetch(&server, &fast_policy()).await.unwrap_err().to_string();
+        let err = fetch(&server, &fast_policy())
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("HTTP 429"), "{}", err);
         assert!(err.contains("rate limited"), "{}", err);
         // 最初の 1 回 + throttle_retries 回
@@ -412,15 +460,21 @@ mod tests {
 
     #[tokio::test]
     async fn challenge_page_fails_without_retry() {
-        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        for (status, page, kind) in [(200, ANUBIS_PAGE, "Anubis"), (403, CLOUDFLARE_PAGE, "Cloudflare")] {
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+        for (status, page, kind) in [
+            (200, ANUBIS_PAGE, "Anubis"),
+            (403, CLOUDFLARE_PAGE, "Cloudflare"),
+        ] {
             let server = MockServer::start().await;
             Mock::given(method("GET"))
                 .respond_with(ResponseTemplate::new(status).set_body_string(page))
                 .mount(&server)
                 .await;
 
-            let err = fetch(&server, &fast_policy()).await.unwrap_err().to_string();
+            let err = fetch(&server, &fast_policy())
+                .await
+                .unwrap_err()
+                .to_string();
             assert!(err.contains("bot challenge"), "{}", err);
             assert!(err.contains(kind), "{}", err);
             assert_eq!(server.received_requests().await.unwrap().len(), 1);
@@ -429,28 +483,34 @@ mod tests {
 
     #[tokio::test]
     async fn client_errors_are_not_retried() {
-        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(404))
             .mount(&server)
             .await;
 
-        let err = fetch(&server, &fast_policy()).await.unwrap_err().to_string();
+        let err = fetch(&server, &fast_policy())
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("HTTP 404"), "{}", err);
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
     #[tokio::test]
     async fn server_errors_use_normal_backoff() {
-        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(503))
             .mount(&server)
             .await;
 
-        let err = fetch(&server, &fast_policy()).await.unwrap_err().to_string();
+        let err = fetch(&server, &fast_policy())
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("HTTP 503"), "{}", err);
         // Retry-After の無い 503 は回数制限ではなく通常の失敗として max_retries 回
         assert_eq!(server.received_requests().await.unwrap().len(), 3);

@@ -144,17 +144,18 @@ fn extract_authors_new_format(p_elem: &scraper::ElementRef) -> Vec<String> {
     let inner = p_elem.inner_html();
 
     // <br> 以降のテキスト部分を取得
-    let after_br = match inner.split("<br>").nth(1).or_else(|| inner.split("<br/>").nth(1)) {
+    let after_br = match inner
+        .split("<br>")
+        .nth(1)
+        .or_else(|| inner.split("<br/>").nth(1))
+    {
         Some(s) => s,
         None => return Vec::new(),
     };
 
     // HTML タグを除去
     let fragment = Html::parse_fragment(after_br);
-    let text = fragment
-        .root_element()
-        .text()
-        .collect::<String>();
+    let text = fragment.root_element().text().collect::<String>();
 
     parse_author_string(&text)
 }
@@ -242,8 +243,7 @@ mod tests {
         </body></html>
         "#;
 
-        let entries =
-            parse_contents(html, "https://www.jasss.org", 29, 1).unwrap();
+        let entries = parse_contents(html, "https://www.jasss.org", 29, 1).unwrap();
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].title, "All Models Are Wrong");
@@ -251,10 +251,7 @@ mod tests {
             entries[0].authors,
             vec!["Emma Von Hoene", "Sara Von Hoene", "Taylor Anderson"]
         );
-        assert_eq!(
-            entries[0].detail_url,
-            "https://www.jasss.org/29/1/7.html"
-        );
+        assert_eq!(entries[0].detail_url, "https://www.jasss.org/29/1/7.html");
     }
 
     #[test]
@@ -270,16 +267,12 @@ mod tests {
         </body></html>
         "#;
 
-        let entries =
-            parse_contents(html, "https://www.jasss.org", 1, 1).unwrap();
+        let entries = parse_contents(html, "https://www.jasss.org", 1, 1).unwrap();
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].title, "Kinship based demographic simulation");
         assert_eq!(entries[0].authors, vec!["Dwight W. Read"]);
-        assert_eq!(
-            entries[0].detail_url,
-            "https://www.jasss.org/1/1/1.html"
-        );
+        assert_eq!(entries[0].detail_url, "https://www.jasss.org/1/1/1.html");
     }
 
     #[test]
@@ -298,14 +291,8 @@ mod tests {
             parse_author_string("Alice Smith, Bob Jones and Carol White"),
             vec!["Alice Smith", "Bob Jones", "Carol White"]
         );
-        assert_eq!(
-            parse_author_string("Single Author"),
-            vec!["Single Author"]
-        );
-        assert_eq!(
-            parse_author_string("A and B"),
-            vec!["A", "B"]
-        );
+        assert_eq!(parse_author_string("Single Author"), vec!["Single Author"]);
+        assert_eq!(parse_author_string("A and B"), vec!["A", "B"]);
     }
 
     #[test]
@@ -321,8 +308,7 @@ mod tests {
         </body></html>
         "#;
 
-        let entries =
-            parse_contents(html, "https://www.jasss.org", 1, 1).unwrap();
+        let entries = parse_contents(html, "https://www.jasss.org", 1, 1).unwrap();
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].title, "Real Paper");
@@ -335,12 +321,22 @@ mod tests {
             "https://www.jasss.org/1/1/3.html"
         );
         assert_eq!(
-            resolve_url("https://www.jasss.org/29/1/7.html", "https://www.jasss.org", 29, 1),
+            resolve_url(
+                "https://www.jasss.org/29/1/7.html",
+                "https://www.jasss.org",
+                29,
+                1
+            ),
             "https://www.jasss.org/29/1/7.html"
         );
         // 先頭にスペースがある絶対URL（旧形式の一部ページで発生）
         assert_eq!(
-            resolve_url(" https://www.jasss.org/6/2/10.html", "https://www.jasss.org", 6, 2),
+            resolve_url(
+                " https://www.jasss.org/6/2/10.html",
+                "https://www.jasss.org",
+                6,
+                2
+            ),
             "https://www.jasss.org/6/2/10.html"
         );
     }

@@ -167,7 +167,10 @@ struct Where {
 
 impl Where {
     fn new() -> Self {
-        Self { sql: String::from(" WHERE 1=1"), params: Vec::new() }
+        Self {
+            sql: String::from(" WHERE 1=1"),
+            params: Vec::new(),
+        }
     }
 
     fn next(&self) -> usize {
@@ -196,25 +199,31 @@ impl PaperQuery {
         let mut w = Where::new();
 
         if use_conference && !self.conferences.is_empty() {
-            let ph: Vec<String> =
-                (0..self.conferences.len()).map(|i| format!("?{}", w.next() + i)).collect();
-            w.sql.push_str(&format!(" AND conference IN ({})", ph.join(",")));
+            let ph: Vec<String> = (0..self.conferences.len())
+                .map(|i| format!("?{}", w.next() + i))
+                .collect();
+            w.sql
+                .push_str(&format!(" AND conference IN ({})", ph.join(",")));
             for c in &self.conferences {
                 w.params.push(Box::new(c.clone()));
             }
         }
 
         if use_year && !self.years.is_empty() {
-            let ph: Vec<String> =
-                (0..self.years.len()).map(|i| format!("?{}", w.next() + i)).collect();
+            let ph: Vec<String> = (0..self.years.len())
+                .map(|i| format!("?{}", w.next() + i))
+                .collect();
             w.sql.push_str(&format!(" AND year IN ({})", ph.join(",")));
             for y in &self.years {
                 w.params.push(Box::new(*y as i64));
             }
         }
 
-        let fields: &[SearchField] =
-            if self.fields.is_empty() { &[SearchField::Title] } else { &self.fields };
+        let fields: &[SearchField] = if self.fields.is_empty() {
+            &[SearchField::Title]
+        } else {
+            &self.fields
+        };
         for term in self.q.split_whitespace() {
             let n = w.next();
             let ors: Vec<String> = fields
@@ -256,8 +265,9 @@ impl CacheDb {
         // 同期の記録（0 件の年もここにだけ現れる）
         let mut sync: BTreeMap<(String, u16), (bool, Option<String>)> = BTreeMap::new();
         {
-            let mut stmt =
-                self.conn.prepare("SELECT conference, year, completed, synced_at FROM sync_years")?;
+            let mut stmt = self
+                .conn
+                .prepare("SELECT conference, year, completed, synced_at FROM sync_years")?;
             let rows = stmt.query_map([], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -291,7 +301,8 @@ impl CacheDb {
                     },
                 );
             }
-            for ((_, y), (done, at)) in sync.range((id.to_string(), 0)..=(id.to_string(), u16::MAX)) {
+            for ((_, y), (done, at)) in sync.range((id.to_string(), 0)..=(id.to_string(), u16::MAX))
+            {
                 let e = years.entry(*y).or_insert(CatalogYear {
                     year: *y,
                     count: 0,
@@ -319,7 +330,12 @@ impl CacheDb {
             });
         }
 
-        Ok(Catalog { schema: SCHEMA_VERSION, total, with_abstract, venues })
+        Ok(Catalog {
+            schema: SCHEMA_VERSION,
+            total,
+            with_abstract,
+            venues,
+        })
     }
 
     /// 1 ページ分の一覧
@@ -367,9 +383,20 @@ impl CacheDb {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        let facets = if q.facets { Some(self.query_facets(q)?) } else { None };
+        let facets = if q.facets {
+            Some(self.query_facets(q)?)
+        } else {
+            None
+        };
 
-        Ok(PaperPage { schema: SCHEMA_VERSION, total, offset: q.offset, limit, papers, facets })
+        Ok(PaperPage {
+            schema: SCHEMA_VERSION,
+            total,
+            offset: q.offset,
+            limit,
+            papers,
+            facets,
+        })
     }
 
     fn query_facets(&self, q: &PaperQuery) -> Result<Facets> {
@@ -380,7 +407,10 @@ impl CacheDb {
         ))?;
         let conference = stmt
             .query_map(w.refs().as_slice(), |r| {
-                Ok(FacetCount { value: r.get::<_, String>(0)?, count: r.get::<_, i64>(1)? as usize })
+                Ok(FacetCount {
+                    value: r.get::<_, String>(0)?,
+                    count: r.get::<_, i64>(1)? as usize,
+                })
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -391,7 +421,10 @@ impl CacheDb {
         ))?;
         let year = stmt
             .query_map(w.refs().as_slice(), |r| {
-                Ok(FacetCount { value: r.get::<_, i64>(0)? as u16, count: r.get::<_, i64>(1)? as usize })
+                Ok(FacetCount {
+                    value: r.get::<_, i64>(0)? as u16,
+                    count: r.get::<_, i64>(1)? as usize,
+                })
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -421,7 +454,10 @@ impl CacheDb {
             })
         })?;
         let paper = rows.next().transpose()?;
-        Ok(PaperDetail { schema: SCHEMA_VERSION, paper })
+        Ok(PaperDetail {
+            schema: SCHEMA_VERSION,
+            paper,
+        })
     }
 }
 
@@ -449,11 +485,46 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut db = CacheDb::open(dir.path()).unwrap();
         db.insert_papers(&[
-            paper("a", "acl", 2025, "Agents that Plan", &["Alice Smith"], "We study LLM agents."),
-            paper("b", "acl", 2024, "Parsing with Grammars", &["Bob Jones"], ""),
-            paper("c", "neurips", 2025, "Diffusion for Agents", &["Carol"], "Diffusion models."),
-            paper("d", "neurips", 2025, "100% Accurate_Model", &["Dan"], "A model."),
-            paper("e", "tjsai", 2025, "エージェントによる社会シミュレーション", &["山田 太郎"], "概要"),
+            paper(
+                "a",
+                "acl",
+                2025,
+                "Agents that Plan",
+                &["Alice Smith"],
+                "We study LLM agents.",
+            ),
+            paper(
+                "b",
+                "acl",
+                2024,
+                "Parsing with Grammars",
+                &["Bob Jones"],
+                "",
+            ),
+            paper(
+                "c",
+                "neurips",
+                2025,
+                "Diffusion for Agents",
+                &["Carol"],
+                "Diffusion models.",
+            ),
+            paper(
+                "d",
+                "neurips",
+                2025,
+                "100% Accurate_Model",
+                &["Dan"],
+                "A model.",
+            ),
+            paper(
+                "e",
+                "tjsai",
+                2025,
+                "エージェントによる社会シミュレーション",
+                &["山田 太郎"],
+                "概要",
+            ),
         ])
         .unwrap();
         db.mark_completed("acl", 2025, 1).unwrap();
@@ -480,12 +551,18 @@ mod tests {
         let cat = db.query_catalog().unwrap();
         assert_eq!(cat.total, 5);
         assert_eq!(cat.with_abstract, 4);
-        assert_eq!(cat.venues.len(), crate::conference::list_conferences().len());
+        assert_eq!(
+            cat.venues.len(),
+            crate::conference::list_conferences().len()
+        );
 
         let acl = cat.venues.iter().find(|v| v.id == "acl").unwrap();
         assert_eq!(acl.total, 2);
         assert_eq!(acl.with_abstract, 1);
-        assert_eq!(acl.years.iter().map(|y| y.year).collect::<Vec<_>>(), vec![2025, 2024]);
+        assert_eq!(
+            acl.years.iter().map(|y| y.year).collect::<Vec<_>>(),
+            vec![2025, 2024]
+        );
         assert!(acl.years[0].completed && acl.years[0].synced);
         assert!(!acl.years[1].synced);
 
@@ -503,46 +580,87 @@ mod tests {
     #[test]
     fn papers_filters_by_conference_year_and_terms() {
         let (_d, db) = seeded();
-        let q = PaperQuery { conferences: vec!["neurips".into()], ..base() };
+        let q = PaperQuery {
+            conferences: vec!["neurips".into()],
+            ..base()
+        };
         assert_eq!(db.query_papers(&q).unwrap().total, 2);
 
-        let q = PaperQuery { years: vec![2024], ..base() };
+        let q = PaperQuery {
+            years: vec![2024],
+            ..base()
+        };
         let page = db.query_papers(&q).unwrap();
         assert_eq!(page.total, 1);
         assert_eq!(page.papers[0].id, "b");
         assert!(!page.papers[0].has_abstract);
 
         // 語は AND・大文字小文字を区別しない
-        let q = PaperQuery { q: "agents DIFFUSION".into(), ..base() };
+        let q = PaperQuery {
+            q: "agents DIFFUSION".into(),
+            ..base()
+        };
         let page = db.query_papers(&q).unwrap();
-        assert_eq!(page.papers.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), vec!["c"]);
+        assert_eq!(
+            page.papers
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c"]
+        );
 
         // 日本語もそのまま当たる
-        let q = PaperQuery { q: "エージェント".into(), ..base() };
+        let q = PaperQuery {
+            q: "エージェント".into(),
+            ..base()
+        };
         assert_eq!(db.query_papers(&q).unwrap().total, 1);
     }
 
     #[test]
     fn papers_searches_selected_fields_only() {
         let (_d, db) = seeded();
-        let q = PaperQuery { q: "LLM".into(), ..base() };
+        let q = PaperQuery {
+            q: "LLM".into(),
+            ..base()
+        };
         assert_eq!(db.query_papers(&q).unwrap().total, 0);
 
-        let q = PaperQuery { q: "LLM".into(), fields: vec![SearchField::Abstract], ..base() };
+        let q = PaperQuery {
+            q: "LLM".into(),
+            fields: vec![SearchField::Abstract],
+            ..base()
+        };
         assert_eq!(db.query_papers(&q).unwrap().total, 1);
 
-        let q = PaperQuery { q: "smith".into(), fields: vec![SearchField::Authors], ..base() };
+        let q = PaperQuery {
+            q: "smith".into(),
+            fields: vec![SearchField::Authors],
+            ..base()
+        };
         assert_eq!(db.query_papers(&q).unwrap().total, 1);
     }
 
     #[test]
     fn like_wildcards_in_terms_are_literal() {
         let (_d, db) = seeded();
-        let q = PaperQuery { q: "%".into(), ..base() };
+        let q = PaperQuery {
+            q: "%".into(),
+            ..base()
+        };
         let page = db.query_papers(&q).unwrap();
-        assert_eq!(page.papers.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), vec!["d"]);
+        assert_eq!(
+            page.papers
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["d"]
+        );
 
-        let q = PaperQuery { q: "_".into(), ..base() };
+        let q = PaperQuery {
+            q: "_".into(),
+            ..base()
+        };
         assert_eq!(db.query_papers(&q).unwrap().total, 1);
     }
 
@@ -551,8 +669,18 @@ mod tests {
         let (_d, db) = seeded();
         let q = PaperQuery { limit: 2, ..base() };
         let p1 = db.query_papers(&q).unwrap();
-        let p2 = db.query_papers(&PaperQuery { offset: 2, ..q.clone() }).unwrap();
-        let p3 = db.query_papers(&PaperQuery { offset: 4, ..q.clone() }).unwrap();
+        let p2 = db
+            .query_papers(&PaperQuery {
+                offset: 2,
+                ..q.clone()
+            })
+            .unwrap();
+        let p3 = db
+            .query_papers(&PaperQuery {
+                offset: 4,
+                ..q.clone()
+            })
+            .unwrap();
         assert_eq!(p1.total, 5);
         let ids: Vec<_> = [p1, p2, p3]
             .into_iter()
@@ -567,7 +695,12 @@ mod tests {
         let (_d, db) = seeded();
         let page = db.query_papers(&PaperQuery { limit: 0, ..base() }).unwrap();
         assert_eq!(page.limit, 1);
-        let page = db.query_papers(&PaperQuery { limit: 100_000, ..base() }).unwrap();
+        let page = db
+            .query_papers(&PaperQuery {
+                limit: 100_000,
+                ..base()
+            })
+            .unwrap();
         assert_eq!(page.limit, MAX_LIMIT);
     }
 
@@ -584,7 +717,11 @@ mod tests {
         assert_eq!(page.total, 1);
         let f = page.facets.unwrap();
         // 会議の件数は年 2025 だけで数える（会議の絞り込みは外す）
-        let conf: Vec<_> = f.conference.iter().map(|c| (c.value.as_str(), c.count)).collect();
+        let conf: Vec<_> = f
+            .conference
+            .iter()
+            .map(|c| (c.value.as_str(), c.count))
+            .collect();
         assert_eq!(conf, vec![("neurips", 2), ("acl", 1), ("tjsai", 1)]);
         // 年の件数は acl だけで数える（年の絞り込みは外す）
         let year: Vec<_> = f.year.iter().map(|y| (y.value, y.count)).collect();
@@ -601,7 +738,10 @@ mod tests {
 
     #[test]
     fn parse_options() {
-        assert_eq!(SearchField::parse("abstract").unwrap(), SearchField::Abstract);
+        assert_eq!(
+            SearchField::parse("abstract").unwrap(),
+            SearchField::Abstract
+        );
         assert!(SearchField::parse("body").is_err());
         assert_eq!(SortOrder::parse("title").unwrap(), SortOrder::Title);
         assert!(SortOrder::parse("random").is_err());

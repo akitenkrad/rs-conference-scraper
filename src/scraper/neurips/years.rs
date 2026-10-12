@@ -25,9 +25,10 @@ fn parse_years(html: &str) -> Result<Vec<u16>> {
                 continue;
             }
             if let Some(year_str) = href.strip_prefix("/paper_files/paper/")
-                && let Ok(year) = year_str.trim_end_matches('/').parse::<u16>() {
-                    years.push(year);
-                }
+                && let Ok(year) = year_str.trim_end_matches('/').parse::<u16>()
+            {
+                years.push(year);
+            }
         }
     }
 

@@ -46,6 +46,9 @@ mod tests {
         assert!(years.contains(&2018));
         assert!(years.contains(&2024));
         // Should be sorted
-        assert_eq!(years, vec![2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]);
+        assert_eq!(
+            years,
+            vec![2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
+        );
     }
 }

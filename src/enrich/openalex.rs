@@ -16,10 +16,7 @@ pub async fn fetch_abstract_via_openalex(client: &Client, title: &str) -> Result
 
     let resp = client
         .get(url)
-        .header(
-            "User-Agent",
-            "conf-scraper/0.1 (mailto:user@example.com)",
-        )
+        .header("User-Agent", "conf-scraper/0.1 (mailto:user@example.com)")
         .send()
         .await?;
 

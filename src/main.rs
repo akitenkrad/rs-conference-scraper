@@ -71,11 +71,7 @@ async fn main() -> Result<()> {
             }
 
             // Build output
-            let conferences = args
-                .conference
-                .iter()
-                .cloned()
-                .collect::<Vec<String>>();
+            let conferences = args.conference.iter().cloned().collect::<Vec<String>>();
             let output = output::FilterOutput {
                 query: output::QueryInfo {
                     conferences,
@@ -167,8 +163,7 @@ async fn main() -> Result<()> {
                     .by_year
                     .iter()
                     .map(|(year, count)| {
-                        let bar =
-                            "#".repeat((*count as f64 / stats.total as f64 * 40.0) as usize);
+                        let bar = "#".repeat((*count as f64 / stats.total as f64 * 40.0) as usize);
                         vec![year.to_string(), count.to_string(), bar]
                     })
                     .collect();
@@ -226,7 +221,6 @@ async fn main() -> Result<()> {
                     &abs_rows,
                 );
             }
-
         }
         Commands::Cache { command } => {
             let mut db = cache::CacheDb::open(&cache_dir)?;
@@ -288,9 +282,11 @@ async fn main() -> Result<()> {
                     };
                     serde_json::to_string(&db.query_papers(&q)?)?
                 }
-                QueryCommands::Paper { id, conference, year } => {
-                    serde_json::to_string(&db.query_paper(&id, &conference, year)?)?
-                }
+                QueryCommands::Paper {
+                    id,
+                    conference,
+                    year,
+                } => serde_json::to_string(&db.query_paper(&id, &conference, year)?)?,
             };
             println!("{}", json);
         }
@@ -298,9 +294,7 @@ async fn main() -> Result<()> {
             let conferences = conference::list_conferences();
             let rows: Vec<Vec<String>> = conferences
                 .iter()
-                .map(|(id, name, field)| {
-                    vec![id.to_string(), name.to_string(), field.to_string()]
-                })
+                .map(|(id, name, field)| vec![id.to_string(), name.to_string(), field.to_string()])
                 .collect();
             print_ascii_table(&["ID", "Name", "Field"], &rows);
         }

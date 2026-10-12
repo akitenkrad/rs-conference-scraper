@@ -64,14 +64,9 @@ impl ConferenceScraper for JasssScraper {
         let mut all_entries = Vec::new();
 
         for issue in issues {
-            let entries = list::fetch_paper_list(
-                client,
-                &self.base_url,
-                volume,
-                issue,
-                self.interval,
-            )
-            .await?;
+            let entries =
+                list::fetch_paper_list(client, &self.base_url, volume, issue, self.interval)
+                    .await?;
             all_entries.extend(entries);
         }
 
@@ -83,9 +78,7 @@ impl ConferenceScraper for JasssScraper {
         client: &reqwest::Client,
         entry: &PaperListEntry,
     ) -> Result<Paper> {
-        let year = self
-            .current_year
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let year = self.current_year.load(std::sync::atomic::Ordering::Relaxed);
         detail::fetch_paper_detail(client, entry, year, self.interval).await
     }
 }
