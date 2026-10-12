@@ -104,6 +104,19 @@ impl SyncProgress {
         }
     }
 
+    /// 警告を出す．
+    ///
+    /// `log` は進捗バーの上に書くだけなので，端末でないとき（launchd・リダイレクト）は
+    /// バーと一緒に捨てられる．警告は tracing で標準エラーに残す（MYTASK-3415）．
+    pub fn warn(&self, msg: &str) {
+        let line = if self.prefix.is_empty() {
+            msg.to_string()
+        } else {
+            format!("[{}] {}", self.prefix, msg)
+        };
+        self.multi.suspend(|| tracing::warn!("{}", line));
+    }
+
     /// 全体完了
     pub fn finish(&self) {
         if let Some(ref bar) = self.year_bar {

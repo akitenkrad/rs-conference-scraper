@@ -90,6 +90,19 @@ conf-scraper sync --conference tjsai --year 2020-2024
 conf-scraper sync --conference emnlp --year 2020-2024 --incremental
 ```
 
+A year is marked completed only when its paper list was fetched and every paper in it was
+saved. If any year is left incomplete, `sync` names those years and exits with a non-zero
+status; run it again with `--incremental` to fetch only what is missing. Examples of causes:
+
+- the paper list could not be fetched
+- some papers failed
+- the source rate-limited the requests
+- the source answered with a bot-challenge page
+
+On HTTP 429, requests wait as the source's `Retry-After` header says, or up to 15–120 s when
+the header is missing, for at most 5 retries. Bot-challenge pages (Cloudflare, Anubis) are
+reported as `blocked by bot challenge` and are not retried.
+
 ### Filter papers
 
 Search cached papers by keywords, categories, or LLM scoring.
@@ -170,7 +183,8 @@ conf-scraper cache clear  # clear all
 previous and current year. Because `--incremental` re-checks completed years for those two
 years, editions that were only partially published at the last sync are filled in later.
 It reads `CINII_APPID` from `~/.zshrc` when the variable is not set (and skips the CiNii
-venues if it is still missing), and refuses to start while another run holds its lock.
+venues if it is still missing), and refuses to start while another run holds its lock. Its exit status is that of `sync`,
+so a run that left years incomplete shows up as a failure in the scheduler.
 
 ```bash
 bash tools/weekly_sync.sh   # e.g. from a weekly launchd agent

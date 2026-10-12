@@ -178,6 +178,9 @@ async fn run_sync_single(
     let mut progress = SyncProgress::with_shared(multi, scraper.name());
     progress.start_years(years.len() as u64);
 
+    // 取りこぼした年（一覧を取れなかった年・論文の取得に失敗した年）．最後にまとめて失敗として返す
+    let mut incomplete: Vec<String> = Vec::new();
+
     for year in &years {
         // Check if already completed
         if config.incremental
@@ -198,10 +201,11 @@ async fn run_sync_single(
         let paper_entries = match scraper.fetch_paper_list(&client, *year).await {
             Ok(entries) => entries,
             Err(e) => {
-                progress.log(&format!(
-                    "  WARN: Failed to fetch paper list for {}: {}, skipping",
+                progress.warn(&format!(
+                    "Failed to fetch paper list for {}: {:#}, skipping",
                     year, e
                 ));
+                incomplete.push(format!("{} (paper list: {:#})", year, e));
                 progress.finish_year();
                 continue;
             }
@@ -211,8 +215,8 @@ async fn run_sync_single(
         // 一覧が空の年（未開催・未公開）は completed にしない．
         // completed にすると，公開後も --incremental で永久に飛ばされる．
         if total == 0 {
-            progress.log(&format!(
-                "  WARN: No papers listed for {} (not yet published?), not marking completed",
+            progress.warn(&format!(
+                "No papers listed for {} (not yet published?), not marking completed",
                 year
             ));
             progress.finish_year();
@@ -249,6 +253,7 @@ async fn run_sync_single(
 
         // Process in checkpoint-sized chunks
         let semaphore = Arc::new(Semaphore::new(config.jobs));
+        let mut failed_papers = 0usize;
 
         for chunk in pending.chunks(config.checkpoint) {
             let mut handles = Vec::new();
@@ -285,8 +290,9 @@ async fn run_sync_single(
             }
 
             for err in &errors {
-                progress.log(&format!("  WARN: Failed to fetch paper: {}", err));
+                progress.warn(&format!("Failed to fetch paper ({}): {}", year, err));
             }
+            failed_papers += errors.len();
 
             let inserted = db.insert_papers(&buffer)?;
             tracing::debug!(
@@ -299,16 +305,45 @@ async fn run_sync_single(
 
         paper_bar.finish_with_message("done");
 
-        // Mark completed
         let total_count = db.fetched_ids(scraper.id(), *year)?.len();
+        // 取れなかった論文がある年は completed にしない（--incremental で次回その分だけ取り直す）
+        if failed_papers > 0 {
+            progress.warn(&format!(
+                "Year {} incomplete: {} of {} papers failed, not marking completed",
+                year,
+                failed_papers,
+                pending.len()
+            ));
+            incomplete.push(format!(
+                "{} ({} of {} papers failed)",
+                year,
+                failed_papers,
+                pending.len()
+            ));
+            progress.finish_year();
+            continue;
+        }
         db.mark_completed(scraper.id(), *year, total_count)?;
         progress.log(&format!("Year {} completed: {} papers", year, total_count));
         progress.finish_year();
     }
 
     progress.finish();
-    tracing::info!("Sync completed for {}", scraper.name());
-    Ok(())
+    incomplete_result(scraper.name(), &incomplete)
+}
+
+/// 取りこぼした年があれば，その一覧を持つエラーにする（終了コードを 0 にしないため）．
+fn incomplete_result(name: &str, incomplete: &[String]) -> Result<()> {
+    if incomplete.is_empty() {
+        tracing::info!("Sync completed for {}", name);
+        return Ok(());
+    }
+    anyhow::bail!(
+        "{}: {} year(s) incomplete: {}",
+        name,
+        incomplete.len(),
+        incomplete.join("; ")
+    )
 }
 
 #[cfg(test)]
@@ -323,5 +358,19 @@ mod tests {
         assert!(!recheck_completed_year(1990, 2026));
         // 来年の回（年の範囲に入ることは無いが）も取り直す側に倒す
         assert!(recheck_completed_year(2027, 2026));
+    }
+
+    #[test]
+    fn incomplete_years_make_the_sync_fail() {
+        assert!(incomplete_result("ePrint", &[]).is_ok());
+        let err = incomplete_result(
+            "ePrint",
+            &["2008 (paper list: HTTP 429)".into(), "2009 (3 of 500 papers failed)".into()],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.starts_with("ePrint: 2 year(s) incomplete"), "{}", err);
+        assert!(err.contains("2008 (paper list: HTTP 429)"), "{}", err);
+        assert!(err.contains("2009 (3 of 500 papers failed)"), "{}", err);
     }
 }
