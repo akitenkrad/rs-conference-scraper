@@ -1,0 +1,73 @@
+<svg width="100%" viewBox="0 0 900 280" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>conf-scraper — conference papers in one local cache</title>
+<desc>conf-scraper collects paper metadata from conference proceedings, DBLP, OpenReview and the IACR ePrint archive into a local SQLite cache, which is then filtered or queried as JSON.</desc>
+<style>
+  .ts    { font-family: -apple-system, "Helvetica Neue", "Hiragino Sans", sans-serif; font-size: 13px; fill: #444441; }
+  .tl    { font-family: -apple-system, "Helvetica Neue", "Hiragino Sans", sans-serif; font-size: 12px; font-weight: 600; fill: #534AB7; letter-spacing: 2px; }
+  .title { font-family: -apple-system, "Helvetica Neue", "Hiragino Sans", sans-serif; font-size: 30px; font-weight: 600; fill: #2C2C2A; }
+  .glab  { font-family: -apple-system, "Helvetica Neue", "Hiragino Sans", sans-serif; font-size: 11px; font-weight: 500; fill: #888780; letter-spacing: 0.5px; }
+  .blab  { font-family: -apple-system, "Helvetica Neue", "Hiragino Sans", sans-serif; font-size: 11px; font-weight: 600; fill: #2C2C2A; }
+  .mono  { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; fill: #0F6E56; }
+  .gray-fill   { fill: #F1EFE8; stroke: #C7C5BD; stroke-width: 0.6; }
+  .purple-fill { fill: #EEEDFE; stroke: #534AB7; stroke-width: 0.6; }
+  .teal-fill   { fill: #E1F5EE; stroke: #0F6E56; stroke-width: 0.6; }
+  .arrd { stroke: #534AB7; stroke-width: 1.6; fill: none; }
+  .line { stroke: #C7C5BD; stroke-width: 1.2; fill: none; }
+  @media (prefers-color-scheme: dark) {
+    .ts    { fill: #C7C5BD; }
+    .tl    { fill: #AFA9EC; }
+    .title { fill: #E5E5E2; }
+    .glab  { fill: #8C8B85; }
+    .blab  { fill: #E5E5E2; }
+    .mono  { fill: #5DCAA5; }
+    .gray-fill   { fill: #3A3A37; stroke: #5F5E5A; }
+    .purple-fill { fill: #534AB7; stroke: #AFA9EC; }
+    .teal-fill   { fill: #0F6E56; stroke: #5DCAA5; }
+    .arrd { stroke: #AFA9EC; }
+    .line { stroke: #5F5E5A; }
+  }
+</style>
+<defs>
+<marker id="arrowAccent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+  <path d="M2 1L8 5L2 9" fill="none" stroke="#534AB7" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<!-- title block (left) -->
+<text class="tl"    x="44" y="96">CONF-SCRAPER</text>
+<text class="title" x="42" y="140">Conference papers,</text>
+<text class="title" x="42" y="178">one local cache</text>
+<text class="ts"    x="44" y="212">Sync 40+ venues to SQLite, then filter or query as JSON.</text>
+
+<!-- MOTIF: sources -> sync -> cache -> outputs -->
+<rect class="gray-fill" x="440" y="62"  width="118" height="30" rx="5"/>
+<text class="blab" x="452" y="81">ACL Anthology</text>
+<rect class="gray-fill" x="440" y="102" width="118" height="30" rx="5"/>
+<text class="blab" x="452" y="121">OpenReview</text>
+<rect class="gray-fill" x="440" y="142" width="118" height="30" rx="5"/>
+<text class="blab" x="452" y="161">DBLP SPARQL</text>
+<rect class="gray-fill" x="440" y="182" width="118" height="30" rx="5"/>
+<text class="blab" x="452" y="201">ePrint OAI-PMH</text>
+<text class="glab" x="440" y="232">sources</text>
+
+<path d="M558 77 C584 77 584 137 600 137"  class="line"/>
+<path d="M558 117 C580 117 584 137 600 137" class="line"/>
+<path d="M558 157 C580 157 584 137 600 137" class="line"/>
+<path d="M558 197 C584 197 584 137 600 137" class="line"/>
+<path d="M600 137 H624" class="arrd" marker-end="url(#arrowAccent)"/>
+<text class="mono" x="594" y="127">sync</text>
+
+<!-- SQLite cache drawn as a cylinder -->
+<path class="purple-fill" d="M632 104 v66 a40 11 0 0 0 80 0 v-66"/>
+<ellipse class="purple-fill" cx="672" cy="104" rx="40" ry="11"/>
+<text class="blab" x="649" y="146">cache.db</text>
+<text class="glab" x="642" y="232">SQLite</text>
+
+<path d="M716 120 C736 120 736 96 752 96"  class="arrd" marker-end="url(#arrowAccent)"/>
+<path d="M716 158 C736 158 736 182 752 182" class="arrd" marker-end="url(#arrowAccent)"/>
+<rect class="teal-fill" x="758" y="80"  width="100" height="32" rx="5"/>
+<text class="mono" x="770" y="100">filter</text>
+<rect class="teal-fill" x="758" y="166" width="100" height="32" rx="5"/>
+<text class="mono" x="770" y="186">query → JSON</text>
+<text class="glab" x="758" y="232">outputs</text>
+</svg>
