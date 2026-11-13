@@ -5,9 +5,8 @@ pub mod years;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -17,12 +16,6 @@ use crate::types::{Paper, PaperListEntry, compute_id};
 
 const DEFAULT_INTERVAL: Duration = Duration::from_millis(1500);
 
-/// Entry from the GitHub API contents listing.
-#[derive(Deserialize)]
-struct GitHubContentEntry {
-    name: String,
-}
-
 pub struct AclAnthologyScraper {
     venue_id: String,
     venue_name: String,
@@ -30,7 +23,6 @@ pub struct AclAnthologyScraper {
     xml_base_url: String,
     interval: Duration,
     paper_cache: Arc<RwLock<HashMap<String, Paper>>>,
-    xml_available_years: Arc<RwLock<Option<HashSet<u16>>>>,
     /// Stores the year currently being processed (set in fetch_paper_list).
     current_year: Arc<RwLock<u16>>,
 }
@@ -45,7 +37,6 @@ impl AclAnthologyScraper {
                 .to_string(),
             interval: DEFAULT_INTERVAL,
             paper_cache: Arc::new(RwLock::new(HashMap::new())),
-            xml_available_years: Arc::new(RwLock::new(None)),
             current_year: Arc::new(RwLock::new(0)),
         }
     }
@@ -53,41 +44,6 @@ impl AclAnthologyScraper {
     pub fn with_interval(mut self, interval: Duration) -> Self {
         self.interval = interval;
         self
-    }
-
-    /// Fetch and cache the set of years for which XML files exist on GitHub.
-    async fn get_xml_available_years(&self, client: &reqwest::Client) -> Result<HashSet<u16>> {
-        // Return cached value if available
-        {
-            let cache = self.xml_available_years.read().await;
-            if let Some(ref years) = *cache {
-                return Ok(years.clone());
-            }
-        }
-
-        let url = "https://api.github.com/repos/acl-org/acl-anthology/contents/data/xml";
-        tracing::debug!("Fetching GitHub API: {}", url);
-
-        // 429 の待機とボット確認画面の検出を通す（MYTASK-3422）．間隔もここであく
-        let body = crate::scraper::fetch_with_sleep(client, url, self.interval).await?;
-        let entries: Vec<GitHubContentEntry> = serde_json::from_str(&body)?;
-
-        // Parse filenames matching {year}.{venue_id}.xml
-        let suffix = format!(".{}.xml", self.venue_id);
-        let mut years = HashSet::new();
-        for entry in &entries {
-            if let Some(year_str) = entry.name.strip_suffix(&suffix)
-                && let Ok(year) = year_str.parse::<u16>()
-            {
-                years.insert(year);
-            }
-        }
-
-        // Cache the result
-        let mut cache = self.xml_available_years.write().await;
-        *cache = Some(years.clone());
-
-        Ok(years)
     }
 }
 
@@ -120,13 +76,10 @@ impl ConferenceScraper for AclAnthologyScraper {
             *current = year;
         }
 
-        // Check XML availability (cached after first call)
-        let xml_years = self.get_xml_available_years(client).await?;
-
-        if xml_years.contains(&year) {
-            // Try XML approach first
-            let url = format!("{}/{}.{}.xml", self.xml_base_url, year, self.venue_id);
-            let xml_body = crate::scraper::fetch_with_sleep(client, &url, self.interval).await?;
+        let xml_url = format!("{}/{}.{}.xml", self.xml_base_url, year, self.venue_id);
+        if let Some(xml_body) =
+            crate::scraper::fetch_with_sleep_optional_404(client, &xml_url, self.interval).await?
+        {
             let parsed = xml::parse_xml(&xml_body, &self.venue_id, year)?;
 
             if !parsed.entries.is_empty() {
@@ -142,6 +95,12 @@ impl ConferenceScraper for AclAnthologyScraper {
             // Fall through to HTML scraping.
             tracing::info!(
                 "XML for {}/{} contains no papers, falling back to HTML scraping",
+                self.venue_id,
+                year
+            );
+        } else {
+            tracing::info!(
+                "XML for {}/{} was not found, falling back to HTML scraping",
                 self.venue_id,
                 year
             );
@@ -220,6 +179,41 @@ impl ConferenceScraper for AclAnthologyScraper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const TEST_XML: &str = r#"<?xml version='1.0' encoding='UTF-8'?>
+        <collection id="2025.acl">
+          <volume id="long" type="proceedings">
+            <paper id="1">
+              <title>Paper from XML</title>
+              <author><first>Alice</first><last>Smith</last></author>
+              <abstract>XML abstract.</abstract>
+              <url>2025.acl-long.1</url>
+            </paper>
+          </volume>
+        </collection>"#;
+
+    const TEST_HTML: &str = r#"
+        <html><body>
+        <div id="2025-acl-main">
+            <h4>Main Conference</h4>
+            <div class="d-sm-flex align-items-stretch mb-3">
+                <span class="d-block">
+                    <strong><a class="align-middle" href="/2025.acl-main.1/">Paper from HTML</a></strong>
+                    <a href="/people/bob-jones/">Bob Jones</a>
+                </span>
+            </div>
+        </div>
+        </body></html>
+    "#;
+
+    fn mock_scraper(server: &MockServer) -> AclAnthologyScraper {
+        let mut scraper = AclAnthologyScraper::new("acl", "ACL").with_interval(Duration::ZERO);
+        scraper.base_url = server.uri();
+        scraper.xml_base_url = server.uri();
+        scraper
+    }
 
     #[test]
     fn test_scraper_id_and_name() {
@@ -288,25 +282,82 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_xml_available_years_caching() {
-        let scraper = AclAnthologyScraper::new("acl", "ACL");
+    async fn fetch_paper_list_reads_available_xml_directly() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/2025.acl.xml"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(TEST_XML))
+            .mount(&server)
+            .await;
 
-        // Manually populate the cache to avoid network call
-        {
-            let mut cache = scraper.xml_available_years.write().await;
-            let mut years = HashSet::new();
-            years.insert(2020);
-            years.insert(2021);
-            years.insert(2022);
-            *cache = Some(years);
-        }
+        let scraper = mock_scraper(&server);
+        let entries = scraper
+            .fetch_paper_list(&reqwest::Client::new(), 2025)
+            .await
+            .unwrap();
 
-        // Should return cached value without network call
-        let client = reqwest::Client::new();
-        let years = scraper.get_xml_available_years(&client).await.unwrap();
-        assert!(years.contains(&2020));
-        assert!(years.contains(&2021));
-        assert!(years.contains(&2022));
-        assert!(!years.contains(&2019));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Paper from XML");
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url.path(), "/2025.acl.xml");
+    }
+
+    #[tokio::test]
+    async fn fetch_paper_list_falls_back_to_html_when_xml_is_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/2025.acl.xml"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/events/acl-2025/"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(TEST_HTML))
+            .mount(&server)
+            .await;
+
+        let scraper = mock_scraper(&server);
+        let entries = scraper
+            .fetch_paper_list(&reqwest::Client::new(), 2025)
+            .await
+            .unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Paper from HTML");
+        let paths: Vec<_> = server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|request| request.url.path().to_string())
+            .collect();
+        assert_eq!(paths, ["/2025.acl.xml", "/events/acl-2025/"]);
+    }
+
+    #[tokio::test]
+    async fn fetch_paper_list_propagates_xml_forbidden_without_html_fallback() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/2025.acl.xml"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/events/acl-2025/"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(TEST_HTML))
+            .mount(&server)
+            .await;
+
+        let scraper = mock_scraper(&server);
+        let error = scraper
+            .fetch_paper_list(&reqwest::Client::new(), 2025)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("HTTP 403"), "{error:#}");
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url.path(), "/2025.acl.xml");
     }
 }

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use reqwest::header::{HeaderMap, HeaderValue};
+use std::fmt;
 use std::time::Duration;
 
 /// URLのクエリ文字列に含まれる機密パラメータ名（値をログ出力時にマスクする）
@@ -80,6 +81,28 @@ pub async fn fetch_with_sleep(
     interval: Duration,
 ) -> Result<String> {
     fetch_with_retry(client, url, interval, 3).await
+}
+
+/// `fetch_with_sleep` と同じ方針で取得し，404 だけを「対象なし」として返す．
+///
+/// 404 以外の 4xx，回数制限，5xx，通信エラー，ボット確認画面は
+/// `fetch_with_sleep` と同じくエラーになる．
+pub(crate) async fn fetch_with_sleep_optional_404(
+    client: &reqwest::Client,
+    url: &str,
+    interval: Duration,
+) -> Result<Option<String>> {
+    match fetch_with_sleep(client, url, interval).await {
+        Ok(body) => Ok(Some(body)),
+        Err(error)
+            if error
+                .downcast_ref::<HttpStatusError>()
+                .is_some_and(|error| error.status == reqwest::StatusCode::NOT_FOUND) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// GETリクエスト + レスポンス取得 + Sleep + リトライ
@@ -183,6 +206,25 @@ fn challenge_error(kind: &str, status: reqwest::StatusCode, safe_url: &str) -> a
     )
 }
 
+#[derive(Debug)]
+struct HttpStatusError {
+    status: reqwest::StatusCode,
+    safe_url: String,
+}
+
+impl fmt::Display for HttpStatusError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "HTTP {} at {}",
+            self.status.as_u16(),
+            self.safe_url
+        )
+    }
+}
+
+impl std::error::Error for HttpStatusError {}
+
 pub(crate) async fn fetch_with_policy(
     client: &reqwest::Client,
     url: &str,
@@ -266,7 +308,7 @@ async fn fetch_inner(
                 }
                 // 4xx は再試行しない
                 if status.is_client_error() {
-                    anyhow::bail!("HTTP {} at {}", status.as_u16(), safe_url);
+                    return Err(HttpStatusError { status, safe_url }.into());
                 }
                 anyhow::anyhow!("HTTP {} at {}", status.as_u16(), safe_url)
             }
