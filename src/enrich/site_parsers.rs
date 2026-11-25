@@ -1,4 +1,4 @@
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Node, Selector};
 
 /// URL のドメインに基づいてサイト固有のパーサを選択し，abstract を抽出する
 pub fn try_site_specific_extraction(url: &str, raw_html: &str, document: &Html) -> Option<String> {
@@ -145,16 +145,98 @@ fn parse_ndss(document: &Html) -> Option<String> {
     crate::scraper::ndss::paper_page::get_legacy_abstract(document)
 }
 
-/// USENIX: `.field-name-field-paper-description .field-item`
+/// USENIX: `.field-name-field-paper-description .field-item` または旧形式の Abstract 見出し
 fn parse_usenix(document: &Html) -> Option<String> {
     let sel = Selector::parse(".field-name-field-paper-description .field-item").ok()?;
-    let el = document.select(&sel).next()?;
-    let text: String = el.text().collect::<Vec<_>>().join(" ");
-    if text.trim().is_empty() {
-        None
-    } else {
-        Some(text)
+    if let Some(text) = document.select(&sel).find_map(|el| {
+        let text = el.text().collect::<Vec<_>>().join(" ");
+        (!text.trim().is_empty()).then_some(text)
+    }) {
+        return Some(text);
     }
+
+    parse_legacy_usenix_abstract(document)
+}
+
+fn parse_legacy_usenix_abstract(document: &Html) -> Option<String> {
+    let heading_sel = Selector::parse("h3, h4").ok()?;
+    let heading = document.select(&heading_sel).find(|heading| {
+        heading
+            .text()
+            .collect::<String>()
+            .trim()
+            .eq_ignore_ascii_case("abstract")
+    })?;
+
+    let mut text_parts = Vec::new();
+    let mut sibling = heading.next_sibling();
+    while let Some(node) = sibling {
+        sibling = node.next_sibling();
+        match node.value() {
+            Node::Text(text) => {
+                if contains_full_text_marker(text) {
+                    break;
+                }
+                text_parts.push(text.to_string());
+            }
+            Node::Element(_) => {
+                let element = ElementRef::wrap(node)?;
+                if collect_legacy_usenix_text(element, &mut text_parts) {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let text = text_parts
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    (text.chars().count() >= 60).then_some(text)
+}
+
+/// 要旨の子孫テキストを収集し，打ち切りノードに到達したら true を返す．
+fn collect_legacy_usenix_text(element: ElementRef<'_>, text_parts: &mut Vec<String>) -> bool {
+    if is_legacy_usenix_stop_element(element.value().name()) {
+        return true;
+    }
+
+    let mut child = element.first_child();
+    while let Some(node) = child {
+        child = node.next_sibling();
+        match node.value() {
+            Node::Text(text) => {
+                if contains_full_text_marker(text) {
+                    return true;
+                }
+                text_parts.push(text.to_string());
+            }
+            Node::Element(_) => {
+                if let Some(child_element) = ElementRef::wrap(node)
+                    && collect_legacy_usenix_text(child_element, text_parts)
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    false
+}
+
+fn is_legacy_usenix_stop_element(name: &str) -> bool {
+    matches!(
+        name,
+        "ul" | "ol" | "hr" | "table" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+    )
+}
+
+fn contains_full_text_marker(text: &str) -> bool {
+    text.to_ascii_lowercase()
+        .contains("full text of this paper")
 }
 
 /// IEEE Xplore: xplGlobal.document.metadata JSON 内の abstract フィールド
@@ -384,6 +466,218 @@ mod tests {
             result,
             Some("We propose new techniques to combat click fraud via premium clicks.".to_string())
         );
+    }
+
+    #[test]
+    fn test_parse_usenix_legacy_1993_h4_and_nested_hr() {
+        let html = r#"
+        <H4>Abstract</H4>
+
+        As an exercise in the application of the concept of least privilege,
+        we have modified the pieces of an ordinary UNIX* mail system, sendmail
+        in particular, to require little or no privilege in their operation.
+        No mail code runs with root or system IDs. In fact, the simplest
+        configuration (local-only mail, with or without mandatory access
+        controls) can run with no privilege or special access rights whatsoever,
+        while even the most complex (multilevel network mail) can be done with
+        minimal privilege requirements. While such modifications cannot
+        guarantee the absence of security holes in mail, they should greatly
+        limit their possible scope.
+
+        <P>
+        <HR>
+
+        Download the full text of this paper in
+        <A href="full_papers/carson">ASCII</A> form (19,226 bytes).
+        <P>
+        To Become a USENIX Member, please see our Membership Information.
+        "#;
+        let doc = Html::parse_document(html);
+        let result = parse_usenix(&doc).expect("legacy abstract should be extracted");
+
+        assert!(result.starts_with("As an exercise"));
+        assert!(result.ends_with("possible scope."));
+        assert!(!result.contains("Download the full text"));
+        assert!(!result.contains("To Become a USENIX Member"));
+    }
+
+    #[test]
+    fn test_parse_usenix_legacy_1995_h4_with_inline_text() {
+        let html = r#"
+        <H4>Abstract</H4>
+
+        The DARPA Internet uses the <i>Domain Name System</i> (DNS), a
+        distributed database, to map host names to network addresses, and
+        vice-versa.  Using a vulnerability first noticed by P.V.  Mockapetris,
+        we demonstrate how the DNS can be abused to subvert system security.
+        We also show what tools are useful to the attacker.  Possible defenses
+        against this attack, including one implemented by Berkeley in response
+        to our reports of this problem, are discussed, and the limitations on
+        their applicability are demonstrated.
+
+        <P>
+        <HR>
+
+        Download the full text of this paper in
+        <A href="full_papers/bellovin.ps">POSTSCRIPT</A> and
+        <A href="full_papers/bellovin.pdf">PDF</A> form.
+
+        <P>
+        To Become a USENIX Member, please see our Membership Information.
+        "#;
+        let doc = Html::parse_document(html);
+        let result = parse_usenix(&doc).expect("legacy abstract should be extracted");
+
+        assert!(result.starts_with("The DARPA Internet"));
+        assert!(result.ends_with("are demonstrated."));
+        assert!(!result.contains("Download the full text"));
+        assert!(!result.contains("To Become a USENIX Member"));
+    }
+
+    #[test]
+    fn test_parse_usenix_legacy_2001_stops_at_list() {
+        let html = r#"
+        <H3>Abstract</H3>
+
+        We present a new approach to fast certificate revocation centered
+        around the concept of an on-line semi-trusted mediator (<I>SEM</I>). The
+        use of a <I>SEM</I> in conjunction with a simple threshold variant of
+        the RSA cryptosystem (mediated RSA) offers a number of practical
+        advantages over current revocation techniques. Our approach simplifies
+        validation of digital signatures and enables certificate revocation
+        within legacy systems. It also provides immediate revocation of all
+        security capabilities. This paper discusses both the architecture and
+        implementation of our approach as well as performance and compatibility
+        with the existing infrastructure. Our results show that threshold
+        cryptography is practical for
+        certificate revocation.
+
+        <UL>
+        <LI>View the full text of this paper in HTML, PDF, and PostScript.
+        <P>
+        <LI>To become a USENIX Member, please see our Membership Information.
+        "#;
+        let doc = Html::parse_document(html);
+        let result = parse_usenix(&doc).expect("legacy abstract should be extracted");
+
+        assert!(result.starts_with("We present a new approach"));
+        assert!(result.ends_with("certificate revocation."));
+        assert!(!result.contains("View the full text"));
+        assert!(
+            !result
+                .to_ascii_lowercase()
+                .contains("to become a usenix member")
+        );
+    }
+
+    #[test]
+    fn test_parse_usenix_legacy_2002_includes_two_paragraphs() {
+        let html = r#"
+        <H3>Abstract</H3>
+        In the Internet, mobile code is ubiquitous and includes such examples
+        as browser plug-ins, Java applets, and document macros. In this paper,
+        we address an important vulnerability in mobile code security that
+        exists in remote execution systems such as Condor, Globus, and
+        SETI@Home. These systems schedule user jobs for execution on remote idle
+        machines. However, they send most of their important system calls back
+        to the local machine for execution. Hence, an evil process on the
+        remote machine can manipulate a user's job to send destructive system
+        calls back to the local machine. We have developed techniques to
+        remotely detect such manipulation.
+
+        <P>Before the job is submitted for remote execution, we construct a
+        model of the user's binary program using static analysis. This binary
+        analysis is applicable to commodity remote execution systems and
+        applications. During remote job execution, the model checks all system
+        calls arriving at the local machine. Execution is only allowed to
+        continue while the model remains valid. We begin with a finite-state
+        machine model that accepts sequences of system calls and then build
+        optimizations into the model to improve its precision and efficiency.
+        We also propose two program transformations, renaming and null call
+        insertion, that have a significant impact on the precision and
+        efficiency. As a desirable side-effect, these techniques also obfuscate
+        the program, thus making it harder for the adversary to reverse engineer
+        the code. We have implemented a simulated remote execution environment
+        to demonstrate how optimizations and transformations of the binary
+        program increase the precision and efficiency. In our test programs,
+        unoptimized models increase run-time by 0.5% or less. At moderate levels
+        of optimization, run-time increases by less than 13% with precision
+        gains reaching 74%.
+
+        <UL>
+        <LI>View the full text of this paper in HTML and PDF.
+        <P>
+        <LI>To become a USENIX Member, please see our Membership Information.
+        "#;
+        let doc = Html::parse_document(html);
+        let result = parse_usenix(&doc).expect("legacy abstract should be extracted");
+
+        assert!(result.starts_with("In the Internet"));
+        assert!(result.contains("Before the job is submitted"));
+        assert!(result.ends_with("precision gains reaching 74%."));
+        assert!(!result.contains("View the full text"));
+        assert!(
+            !result
+                .to_ascii_lowercase()
+                .contains("to become a usenix member")
+        );
+    }
+
+    #[test]
+    fn test_parse_usenix_legacy_2004_stops_at_immediate_list() {
+        let html = r#"
+        <H3>Abstract</H3>
+        We present Tor, a circuit-based low-latency anonymous communication
+        service. This second-generation Onion Routing system addresses limitations
+        in the original design by adding perfect forward secrecy, congestion
+        control, directory servers, integrity checking, configurable exit
+        policies, and a practical design for location-hidden services via
+        rendezvous points. Tor works on the real-world Internet, requires no
+        special privileges or kernel modifications, requires little synchronization
+        or coordination between nodes, and provides a reasonable tradeoff between
+        anonymity, usability, and efficiency. We briefly describe our experiences
+        with an international network of more than 30 nodes. We close with a list
+        of open problems in anonymous communication.<UL>
+
+        <LI>View the full text of this paper in HTML and PDF.
+        </ul>
+        <table><tr><td>To become a USENIX Member.</td></tr></table>
+        "#;
+        let doc = Html::parse_document(html);
+        let result = parse_usenix(&doc).expect("legacy abstract should be extracted");
+
+        assert!(result.starts_with("We present Tor"));
+        assert!(result.ends_with("anonymous communication."));
+        assert!(!result.contains("View the full text"));
+        assert!(
+            !result
+                .to_ascii_lowercase()
+                .contains("to become a usenix member")
+        );
+    }
+
+    #[test]
+    fn test_parse_usenix_legacy_without_abstract_heading_returns_none() {
+        let html = r#"
+        <h3>Introduction</h3>
+        This page contains enough text to exceed the minimum length, but it
+        has no abstract heading and therefore must not be treated as one.
+        "#;
+        let doc = Html::parse_document(html);
+
+        assert_eq!(parse_usenix(&doc), None);
+    }
+
+    #[test]
+    fn test_parse_usenix_legacy_short_body_returns_none() {
+        let html = r#"
+        <h3>Abstract</h3>
+        This legacy abstract is intentionally too short.
+        <hr>
+        "#;
+        let doc = Html::parse_document(html);
+
+        assert_eq!(parse_usenix(&doc), None);
     }
 
     #[test]
