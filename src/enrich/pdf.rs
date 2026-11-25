@@ -1,6 +1,11 @@
 use anyhow::Result;
 use regex::Regex;
 use reqwest::Client;
+use std::{io::ErrorKind, process::Stdio, sync::Once, time::Duration};
+use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
+
+static PDFTOTEXT_NOT_FOUND_WARNING: Once = Once::new();
+const PDFTOTEXT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 複数の候補URLからPDFを取得してabstractを抽出する
 ///
@@ -144,24 +149,96 @@ async fn try_fetch_and_extract(client: &Client, url: &str) -> Result<String> {
     })
     .await?;
 
-    let pages = match extraction {
-        Ok(Ok(p)) => p,
+    let text = match extraction {
+        Ok(Ok(pages)) => pages.iter().take(2).cloned().collect::<Vec<_>>().join("\n"),
         Ok(Err(e)) => {
             tracing::debug!("PDF text extraction failed for '{}': {}", url, e);
-            return Ok(String::new());
+            String::new()
         }
         Err(_) => {
             tracing::warn!("PDF text extraction panicked for '{}' (malformed PDF)", url);
+            String::new()
+        }
+    };
+
+    if text.is_empty() {
+        let fallback_text = extract_with_pdftotext(&bytes, "pdftotext").await?;
+        let abstract_text = extract_abstract_from_text(&fallback_text)?;
+        if !abstract_text.is_empty() {
+            tracing::debug!("pdftotext fallback succeeded for {}", url);
+        }
+        return Ok(abstract_text);
+    }
+
+    extract_abstract_from_text(&text)
+}
+
+async fn extract_with_pdftotext(bytes: &[u8], program: &str) -> Result<String> {
+    let mut child = match Command::new(program)
+        .args(["-f", "1", "-l", "2", "-enc", "UTF-8", "-", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            PDFTOTEXT_NOT_FOUND_WARNING.call_once(|| {
+                tracing::warn!("pdftotext executable was not found; PDF fallback is disabled");
+            });
+            return Ok(String::new());
+        }
+        Err(error) => {
+            tracing::debug!("Failed to start pdftotext fallback: {}", error);
             return Ok(String::new());
         }
     };
 
-    let text: String = pages.iter().take(2).cloned().collect::<Vec<_>>().join("\n");
-    if text.is_empty() {
+    let Some(mut stdin) = child.stdin.take() else {
+        tracing::debug!("Failed to open stdin for pdftotext fallback");
+        return Ok(String::new());
+    };
+
+    let write_input = async move {
+        let write_result = stdin.write_all(bytes).await;
+        let shutdown_result = stdin.shutdown().await;
+        drop(stdin);
+        write_result.and(shutdown_result)
+    };
+    let communication = async { tokio::join!(write_input, child.wait_with_output()) };
+    let (write_result, output_result) = match timeout(PDFTOTEXT_TIMEOUT, communication).await {
+        Ok(results) => results,
+        Err(_) => {
+            tracing::debug!("pdftotext fallback timed out after 30 seconds");
+            return Ok(String::new());
+        }
+    };
+
+    if let Err(error) = write_result {
+        tracing::debug!("Failed to write PDF to pdftotext stdin: {}", error);
         return Ok(String::new());
     }
 
-    extract_abstract_from_text(&text)
+    let output = match output_result {
+        Ok(output) => output,
+        Err(error) => {
+            tracing::debug!("Failed to wait for pdftotext fallback: {}", error);
+            return Ok(String::new());
+        }
+    };
+    if !output.status.success() {
+        tracing::debug!("pdftotext fallback exited with status {}", output.status);
+        return Ok(String::new());
+    }
+
+    match String::from_utf8(output.stdout) {
+        Ok(text) => Ok(text.replace('\x0c', "\n")),
+        Err(error) => {
+            tracing::debug!("pdftotext fallback returned invalid UTF-8: {}", error);
+            Ok(String::new())
+        }
+    }
 }
 
 /// テキストから "Abstract" セクションを抽出する
@@ -207,6 +284,80 @@ fn normalize_pdf_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn minimal_pdf_with_abstract() -> Vec<u8> {
+        let content = concat!(
+            "BT\n",
+            "/F1 12 Tf\n",
+            "72 720 Td\n",
+            "(Abstract) Tj\n",
+            "0 -20 Td\n",
+            "(This paper presents a compact fallback extraction test with more than sixty characters of body text.) Tj\n",
+            "0 -20 Td\n",
+            "(1 Introduction) Tj\n",
+            "ET\n",
+        );
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>".to_string(),
+            format!("<< /Length {} >>\nstream\n{}endstream", content.len(), content),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        ];
+
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", index + 1, object).as_bytes());
+        }
+
+        let xref_offset = pdf.len();
+        pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+        pdf.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in offsets {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        pdf
+    }
+
+    #[tokio::test]
+    async fn test_extract_with_pdftotext_missing_program_returns_empty() {
+        let text =
+            extract_with_pdftotext(b"not a PDF", "pdftotext-does-not-exist-conf-scraper-test")
+                .await
+                .unwrap();
+
+        assert!(text.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_extract_with_pdftotext_extracts_abstract_from_generated_pdf() {
+        if tokio::process::Command::new("pdftotext")
+            .arg("-v")
+            .output()
+            .await
+            .is_err()
+        {
+            return;
+        }
+
+        let text = extract_with_pdftotext(&minimal_pdf_with_abstract(), "pdftotext")
+            .await
+            .unwrap();
+        let abstract_text = extract_abstract_from_text(&text).unwrap();
+
+        assert!(!text.contains('\x0c'));
+        assert!(abstract_text.contains("compact fallback extraction test"));
+        assert!(!abstract_text.contains("Introduction"));
+    }
 
     #[test]
     fn test_extract_abstract_basic() {
