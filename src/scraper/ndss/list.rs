@@ -468,6 +468,32 @@ mod tests {
     }
 
     #[test]
+    fn test_legacy_main_programme_urls_are_not_workshops() {
+        let html = r#"
+        <div class="single-paper"><div class="inner-wrap">
+          <h3>1997 Main Conference Paper</h3>
+          <p>Alice Example and Bob Example</p>
+          <p class="paper-link-abs"><a href="https://www.ndss-symposium.org/ndss1997/paper-slug/">Read More</a></p>
+        </div></div>
+        <div class="single-paper"><div class="inner-wrap">
+          <h3>2012 Main Conference Paper</h3>
+          <p>Carol Example</p>
+          <p class="paper-link-abs"><a href="https://www.ndss-symposium.org/ndss2012/ndss-2012-programme/another-paper/">Read More</a></p>
+        </div></div>
+        <div class="single-paper"><div class="inner-wrap">
+          <h3>Workshop Paper</h3>
+          <p>Mallory Example</p>
+          <p class="paper-link-abs"><a href="https://www.ndss-symposium.org/ndss2012/usec-2012-programme/workshop-paper/">Read More</a></p>
+        </div></div>
+        "#;
+
+        let entries = parse_paper_list(html, "https://www.ndss-symposium.org").unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].title, "1997 Main Conference Paper");
+        assert_eq!(entries[1].title, "2012 Main Conference Paper");
+    }
+
+    #[test]
     fn test_parse_authors() {
         let authors = parse_authors("Alice Smith (MIT), Bob Jones (Stanford), Charlie Brown (CMU)");
         assert_eq!(authors, vec!["Alice Smith", "Bob Jones", "Charlie Brown"]);

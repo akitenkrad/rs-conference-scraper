@@ -372,6 +372,21 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_usenix_legacy_paper_page() {
+        let html = r#"
+        <div class="field field-name-field-paper-description field-type-text-long field-label-hidden">
+          <div class="field-items field-items"><div class="field-item odd"><p><span>We propose new techniques to combat click fraud via premium clicks.</span></p></div></div>
+        </div>
+        "#;
+        let doc = Html::parse_document(html);
+        let result = parse_usenix(&doc);
+        assert_eq!(
+            result,
+            Some("We propose new techniques to combat click fraud via premium clicks.".to_string())
+        );
+    }
+
+    #[test]
     fn test_no_match_returns_none() {
         let html = r#"<html><body><p>Hello</p></body></html>"#;
         let doc = Html::parse_document(html);

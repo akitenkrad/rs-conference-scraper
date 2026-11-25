@@ -24,6 +24,7 @@ pub struct DblpScraper {
     year_range: (u16, u16),
     interval: Duration,
     sparql_endpoint: String,
+    main_proceedings_only: bool,
     /// 設定されていれば，ePrint（この base URL）の OAI-PMH とタイトルで照合してアブストラクトを補う
     eprint_abstracts: Option<String>,
     paper_cache: Arc<RwLock<HashMap<String, Paper>>>,
@@ -45,6 +46,7 @@ impl DblpScraper {
             year_range: (year_start, year_end),
             interval: DEFAULT_INTERVAL,
             sparql_endpoint: sparql::SPARQL_ENDPOINT.to_string(),
+            main_proceedings_only: false,
             eprint_abstracts: None,
             paper_cache: Arc::new(RwLock::new(HashMap::new())),
             cached_years: Arc::new(RwLock::new(None)),
@@ -59,6 +61,12 @@ impl DblpScraper {
     /// アブストラクトを ePrint で補う（IACR の会議向け．MYTASK-3420）
     pub fn with_eprint_abstracts(mut self, eprint_base_url: &str) -> Self {
         self.eprint_abstracts = Some(eprint_base_url.to_string());
+        self
+    }
+
+    /// `conf/{key}/{year}` の本会議録に収録された論文だけを SPARQL で取得する．
+    pub fn with_main_proceedings_only(mut self) -> Self {
+        self.main_proceedings_only = true;
         self
     }
 
@@ -96,7 +104,20 @@ impl DblpScraper {
 
     /// 指定年の論文を DBLP から取得する．SPARQL → Search API → XML の順に試し，
     /// どれかが成功すればそれを返す（空の年も成功として扱う）．全部失敗したら 3 つのエラーをまとめる．
+    /// 本会議録限定時は，絞り込みを維持するため SPARQL だけを使う．
     async fn load_year(&self, client: &reqwest::Client, year: u16) -> Result<Vec<Paper>> {
+        if self.main_proceedings_only {
+            return sparql::fetch_main_proceedings_papers_for_year(
+                client,
+                &self.sparql_endpoint,
+                &self.dblp_key,
+                &self.conf_id,
+                year,
+                self.interval,
+            )
+            .await;
+        }
+
         let sparql_err = match sparql::fetch_papers_for_year(
             client,
             &self.sparql_endpoint,
@@ -244,6 +265,15 @@ mod tests {
         let scraper = DblpScraper::new("sp", "IEEE S&P", "sp", 1981, 2025);
         assert_eq!(scraper.id(), "sp");
         assert_eq!(scraper.name(), "IEEE S&P");
+    }
+
+    #[test]
+    fn main_proceedings_only_is_opt_in() {
+        let default = DblpScraper::new("uss", "USENIX Security", "uss", 1993, 2013);
+        assert!(!default.main_proceedings_only);
+
+        let filtered = default.with_main_proceedings_only();
+        assert!(filtered.main_proceedings_only);
     }
 
     #[tokio::test]

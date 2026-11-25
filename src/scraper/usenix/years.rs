@@ -1,6 +1,8 @@
-/// Returns the list of available USENIX Security years (2014-2025).
+/// USENIX Security の利用可能な年を返す．
 pub fn available_years() -> Vec<u16> {
-    (2014..=crate::conference::current_year()).collect()
+    let mut years = vec![1993, 1995, 1996];
+    years.extend(1998..=crate::conference::current_year());
+    years
 }
 
 #[cfg(test)]
@@ -10,12 +12,14 @@ mod tests {
     #[test]
     fn test_available_years_range() {
         let years = available_years();
-        assert_eq!(years.first(), Some(&2014));
+        assert_eq!(years.first(), Some(&1993));
         assert_eq!(years.last(), Some(&crate::conference::current_year()));
-        assert_eq!(
-            years.len(),
-            (crate::conference::current_year() - 2014 + 1) as usize
-        );
+        for missing in [1990, 1991, 1992, 1994, 1997] {
+            assert!(!years.contains(&missing));
+        }
+        for present in [1993, 1995, 1996, 1998, 2013, 2014] {
+            assert!(years.contains(&present));
+        }
     }
 
     #[test]

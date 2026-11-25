@@ -4,16 +4,41 @@ pub mod years;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 
 use crate::conference::ConferenceScraper;
-use crate::types::{Paper, PaperListEntry};
+use crate::scraper::dblp::DblpScraper;
+use crate::types::{Paper, PaperListEntry, compute_id};
 
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(10);
 
 pub struct UsenixScraper {
     base_url: String,
     interval: Duration,
+    dblp: DblpScraper,
+    paper_years: Arc<RwLock<HashMap<String, u16>>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Backend {
+    Dblp,
+    Official,
+}
+
+fn backend_for_year(year: u16) -> Backend {
+    if (1993..=2013).contains(&year) {
+        Backend::Dblp
+    } else {
+        Backend::Official
+    }
+}
+
+fn new_dblp_scraper() -> DblpScraper {
+    DblpScraper::new("usenix-security", "USENIX Security", "uss", 1993, 2013)
+        .with_main_proceedings_only()
 }
 
 impl UsenixScraper {
@@ -21,6 +46,8 @@ impl UsenixScraper {
         Self {
             base_url: "https://www.usenix.org".to_string(),
             interval: DEFAULT_INTERVAL,
+            dblp: new_dblp_scraper(),
+            paper_years: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -31,6 +58,8 @@ impl UsenixScraper {
         } else {
             self.interval = interval;
         }
+        let dblp = std::mem::replace(&mut self.dblp, new_dblp_scraper());
+        self.dblp = dblp.with_interval(interval);
         self
     }
 }
@@ -58,7 +87,18 @@ impl ConferenceScraper for UsenixScraper {
         client: &reqwest::Client,
         year: u16,
     ) -> Result<Vec<PaperListEntry>> {
-        list::fetch_paper_list(client, &self.base_url, year, self.interval).await
+        let entries = match backend_for_year(year) {
+            Backend::Dblp => self.dblp.fetch_paper_list(client, year).await?,
+            Backend::Official => {
+                list::fetch_paper_list(client, &self.base_url, year, self.interval).await?
+            }
+        };
+
+        let mut paper_years = self.paper_years.write().await;
+        for entry in &entries {
+            paper_years.insert(compute_id(&entry.title), year);
+        }
+        Ok(entries)
     }
 
     async fn fetch_paper_detail(
@@ -66,8 +106,22 @@ impl ConferenceScraper for UsenixScraper {
         client: &reqwest::Client,
         entry: &PaperListEntry,
     ) -> Result<Paper> {
-        let year = extract_year_from_url(&entry.detail_url).unwrap_or(0);
-        paper_page::fetch_paper_detail(client, entry, year, self.interval).await
+        let paper_id = compute_id(&entry.title);
+        let year = self
+            .paper_years
+            .read()
+            .await
+            .get(&paper_id)
+            .copied()
+            .or_else(|| extract_year_from_url(&entry.detail_url))
+            .unwrap_or(0);
+
+        match backend_for_year(year) {
+            Backend::Dblp => self.dblp.fetch_paper_detail(client, entry).await,
+            Backend::Official => {
+                paper_page::fetch_paper_detail(client, entry, year, self.interval).await
+            }
+        }
     }
 }
 
@@ -130,5 +184,13 @@ mod tests {
         let scraper = UsenixScraper::new();
         assert_eq!(scraper.id(), "usenix-security");
         assert_eq!(scraper.name(), "USENIX Security");
+    }
+
+    #[test]
+    fn test_list_and_detail_backend_routing_at_2013_boundary() {
+        assert_eq!(backend_for_year(1993), Backend::Dblp);
+        assert_eq!(backend_for_year(2013), Backend::Dblp);
+        assert_eq!(backend_for_year(2014), Backend::Official);
+        assert!(!UsenixScraper::new().details_are_local());
     }
 }

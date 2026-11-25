@@ -499,6 +499,34 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_paper_detail_legacy_page_without_abstract() {
+        let html = r#"
+        <h1>Document Structure Integrity</h1>
+        <section class="new-wrapper">
+          <p><strong>Author(s): </strong>Y. Nadji, Prateek Saxena, Dawn Song</p>
+          <p><strong>Download: </strong><a href="/wp-content/uploads/paper.pdf">Paper</a> (PDF)</p>
+        </section>
+        "#;
+        let entry = PaperListEntry {
+            title: "List title".to_string(),
+            authors: Vec::new(),
+            detail_url: "https://www.ndss-symposium.org/ndss2009/paper/".to_string(),
+            track: Some("Conference".to_string()),
+        };
+
+        let paper = parse_paper_detail(html, &entry, "ndss", 2009).unwrap();
+        assert_eq!(paper.r#abstract, "");
+        assert_eq!(
+            paper.authors,
+            vec!["Y. Nadji", "Prateek Saxena", "Dawn Song"]
+        );
+        assert_eq!(
+            paper.pdf_url,
+            Some("https://www.ndss-symposium.org/wp-content/uploads/paper.pdf".to_string())
+        );
+    }
+
+    #[test]
     fn test_parse_paper_detail_2017_legacy_page_with_breaks_and_nbsp() {
         let html = r#"
         <h1>Indiscreet Logs: Diffie-Hellman Backdoors in TLS</h1>

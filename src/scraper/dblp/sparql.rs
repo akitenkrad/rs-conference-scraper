@@ -27,6 +27,18 @@ pub const SPARQL_ENDPOINT: &str = "https://sparql.dblp.org/sparql";
 /// 1 論文につき «著者の数» 行が返る（著者がいなければ 1 行）．
 /// 集約（GROUP_CONCAT）はエンドポイント側で遅い（S&P 2026 で 26 秒）ので，平たい行で受けて手元でまとめる．
 pub(crate) fn build_query(dblp_key: &str, year: u16) -> Result<String> {
+    build_query_with_options(dblp_key, year, false)
+}
+
+pub(crate) fn build_main_proceedings_query(dblp_key: &str, year: u16) -> Result<String> {
+    build_query_with_options(dblp_key, year, true)
+}
+
+fn build_query_with_options(
+    dblp_key: &str,
+    year: u16,
+    main_proceedings_only: bool,
+) -> Result<String> {
     if dblp_key.is_empty()
         || !dblp_key
             .chars()
@@ -34,12 +46,17 @@ pub(crate) fn build_query(dblp_key: &str, year: u16) -> Result<String> {
     {
         bail!("invalid DBLP stream key: {:?}", dblp_key);
     }
+    let main_proceedings_clause = if main_proceedings_only {
+        format!("\n         dblp:publishedAsPartOf <https://dblp.org/rec/conf/{dblp_key}/{year}> ;")
+    } else {
+        String::new()
+    };
     Ok(format!(
         r#"PREFIX dblp: <https://dblp.org/rdf/schema#>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 SELECT ?paper ?title ?doc ?ord ?name WHERE {{
   ?paper a dblp:Inproceedings ;
-         dblp:publishedInStream <https://dblp.org/streams/conf/{key}> ;
+         dblp:publishedInStream <https://dblp.org/streams/conf/{key}> ;{main_proceedings_clause}
          dblp:title ?title .
   {{ ?paper dblp:yearOfEvent "{year}"^^xsd:gYear }}
   UNION
@@ -51,7 +68,8 @@ SELECT ?paper ?title ?doc ?ord ?name WHERE {{
                   dblp:signatureDblpName ?name . }}
 }}"#,
         key = dblp_key,
-        year = year
+        year = year,
+        main_proceedings_clause = main_proceedings_clause,
     ))
 }
 
@@ -160,6 +178,29 @@ pub async fn fetch_papers_for_year(
     interval: Duration,
 ) -> Result<Vec<Paper>> {
     let query = build_query(dblp_key, year)?;
+    fetch_papers_for_year_with_query(client, endpoint, conf_id, year, interval, query).await
+}
+
+pub async fn fetch_main_proceedings_papers_for_year(
+    client: &reqwest::Client,
+    endpoint: &str,
+    dblp_key: &str,
+    conf_id: &str,
+    year: u16,
+    interval: Duration,
+) -> Result<Vec<Paper>> {
+    let query = build_main_proceedings_query(dblp_key, year)?;
+    fetch_papers_for_year_with_query(client, endpoint, conf_id, year, interval, query).await
+}
+
+async fn fetch_papers_for_year_with_query(
+    client: &reqwest::Client,
+    endpoint: &str,
+    conf_id: &str,
+    year: u16,
+    interval: Duration,
+    query: String,
+) -> Result<Vec<Paper>> {
     let url = reqwest::Url::parse_with_params(endpoint, &[("query", query.as_str())])
         .with_context(|| format!("invalid SPARQL endpoint: {}", endpoint))?;
     let body = fetch_with_sleep(client, url.as_str(), interval)
@@ -231,6 +272,40 @@ mod tests {
             q
         );
         assert!(q.contains("a dblp:Inproceedings"), "{}", q);
+    }
+
+    #[test]
+    fn main_proceedings_query_filters_by_proceedings_record() {
+        let q = build_main_proceedings_query("uss", 2008).unwrap();
+        assert!(
+            q.contains("dblp:publishedAsPartOf <https://dblp.org/rec/conf/uss/2008>"),
+            "{}",
+            q
+        );
+    }
+
+    #[test]
+    fn default_query_remains_byte_for_byte_unchanged() {
+        let q = build_query("uss", 2008).unwrap();
+        assert_eq!(
+            q,
+            r#"PREFIX dblp: <https://dblp.org/rdf/schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT ?paper ?title ?doc ?ord ?name WHERE {
+  ?paper a dblp:Inproceedings ;
+         dblp:publishedInStream <https://dblp.org/streams/conf/uss> ;
+         dblp:title ?title .
+  { ?paper dblp:yearOfEvent "2008"^^xsd:gYear }
+  UNION
+  { ?paper dblp:yearOfPublication "2008"^^xsd:gYear .
+     FILTER NOT EXISTS { ?paper dblp:yearOfEvent ?event } }
+  OPTIONAL { ?paper dblp:primaryDocumentPage ?doc }
+  OPTIONAL { ?paper dblp:hasSignature ?sig .
+             ?sig dblp:signatureOrdinal ?ord ;
+                  dblp:signatureDblpName ?name . }
+}"#
+        );
+        assert!(!q.contains("dblp:publishedAsPartOf"));
     }
 
     #[test]
@@ -306,6 +381,21 @@ mod tests {
         assert_eq!(papers[0].url, "https://doi.org/10.1/b");
         assert!(papers[0].authors.is_empty());
         assert_eq!(papers[1].url, "https://dblp.org/rec/conf/sp/C26");
+    }
+
+    #[test]
+    fn usenix_record_without_document_keeps_conference_and_record_url() {
+        let record = "https://dblp.org/rec/conf/uss/SmallMMPS08";
+        let body = response(
+            &[binding(record, "To Catch a Predator.", None, None)],
+            Some(1),
+        );
+        let papers = parse_response(&body, "usenix-security", 2008).unwrap();
+
+        assert_eq!(papers.len(), 1);
+        assert_eq!(papers[0].conference, "usenix-security");
+        assert_eq!(papers[0].url, record);
+        assert_eq!(papers[0].r#abstract, "");
     }
 
     #[test]
