@@ -1,10 +1,12 @@
 use anyhow::Result;
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 
 use crate::scraper::fetch_with_sleep;
 use crate::types::{Paper, PaperListEntry};
+
+const NDSS_BASE_URL: &str = "https://www.ndss-symposium.org";
 
 pub async fn fetch_paper_detail(
     client: &reqwest::Client,
@@ -13,8 +15,31 @@ pub async fn fetch_paper_detail(
     year: u16,
     interval: Duration,
 ) -> Result<Paper> {
+    if entry.detail_url.to_ascii_lowercase().ends_with(".pdf") {
+        return Ok(paper_from_pdf_entry(entry, conference, year));
+    }
+
     let html = fetch_with_sleep(client, &entry.detail_url, interval).await?;
     parse_paper_detail(&html, entry, conference, year)
+}
+
+fn paper_from_pdf_entry(entry: &PaperListEntry, conference: &str, year: u16) -> Paper {
+    let id = compute_sha256(&entry.title);
+    let hash = compute_sha256(&entry.title);
+    let categories = entry.track.clone().into_iter().collect();
+
+    Paper {
+        id,
+        conference: conference.to_string(),
+        year,
+        title: entry.title.clone(),
+        authors: entry.authors.clone(),
+        r#abstract: String::new(),
+        url: entry.detail_url.clone(),
+        pdf_url: Some(entry.detail_url.clone()),
+        categories,
+        hash,
+    }
 }
 
 fn compute_sha256(input: &str) -> String {
@@ -86,29 +111,32 @@ fn get_authors(document: &Html) -> Option<Vec<String>> {
     // the author text ends up in a standalone <p> sibling of <strong>.
     // We identify the author paragraph by looking for text containing
     // parenthesized affiliations (e.g., "(University)").
-    let selector = Selector::parse("div.paper-data").ok()?;
-    let paper_data = document.select(&selector).next()?;
+    if let Ok(selector) = Selector::parse("div.paper-data")
+        && let Some(paper_data) = document.select(&selector).next()
+        && let Ok(p_selector) = Selector::parse("p")
+    {
+        // Scan all <p> elements in paper-data and find one that looks like an author list
+        // (contains parenthesized affiliations and is not too long to be an abstract)
+        for p_el in paper_data.select(&p_selector) {
+            let raw = p_el.text().collect::<Vec<_>>().join(" ").trim().to_string();
+            if raw.is_empty() {
+                continue;
+            }
 
-    let p_selector = Selector::parse("p").ok()?;
-
-    // Scan all <p> elements in paper-data and find one that looks like an author list
-    // (contains parenthesized affiliations and is not too long to be an abstract)
-    for p_el in paper_data.select(&p_selector) {
-        let raw = p_el.text().collect::<Vec<_>>().join(" ").trim().to_string();
-        if raw.is_empty() {
-            continue;
-        }
-
-        // Author lines contain parenthesized affiliations
-        if raw.contains('(') && raw.contains(')') {
-            let authors = parse_author_string(&raw);
-            if !authors.is_empty() {
-                return Some(authors);
+            // Author lines contain parenthesized affiliations
+            if raw.contains('(') && raw.contains(')') {
+                let authors = parse_author_string(&raw);
+                if !authors.is_empty() {
+                    return Some(authors);
+                }
             }
         }
     }
 
-    None
+    let paragraph = find_labeled_paragraph(document, "Author(s):")?;
+    let raw = normalize_whitespace(&paragraph.text().collect::<Vec<_>>().join(" "));
+    let authors = super::list::parse_plain_authors(raw.strip_prefix("Author(s):")?.trim());
+    (!authors.is_empty()).then_some(authors)
 }
 
 fn get_abstract(document: &Html) -> String {
@@ -153,7 +181,39 @@ fn get_abstract(document: &Html) -> String {
         }
     }
 
+    if let Some(abstract_text) = get_legacy_abstract(document) {
+        return abstract_text;
+    }
+
     String::new()
+}
+
+pub(crate) fn get_legacy_abstract(document: &Html) -> Option<String> {
+    let heading_selector = Selector::parse("h2").ok()?;
+    let heading = document.select(&heading_selector).find(|heading| {
+        normalize_whitespace(&heading.text().collect::<Vec<_>>().join(" ")) == "Abstract:"
+    })?;
+
+    let mut paragraphs = Vec::new();
+    let mut sibling = heading.next_sibling();
+    while let Some(node) = sibling {
+        sibling = node.next_sibling();
+        let Some(element) = ElementRef::wrap(node) else {
+            continue;
+        };
+        let tag = element.value().name();
+        if matches!(tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+            break;
+        }
+        if tag == "p" {
+            let text = normalize_whitespace(&element.text().collect::<Vec<_>>().join(" "));
+            if !text.is_empty() {
+                paragraphs.push(text);
+            }
+        }
+    }
+
+    (!paragraphs.is_empty()).then(|| paragraphs.join(" "))
 }
 
 fn get_pdf_url(document: &Html) -> Option<String> {
@@ -163,6 +223,16 @@ fn get_pdf_url(document: &Html) -> Option<String> {
         && let Some(href) = el.value().attr("href")
     {
         return Some(href.to_string());
+    }
+
+    if let Some(downloads) = find_labeled_paragraph(document, "Download:")
+        && let Ok(link_selector) = Selector::parse("a")
+        && let Some(href) = downloads
+            .select(&link_selector)
+            .next()
+            .and_then(|link| link.value().attr("href"))
+    {
+        return Some(absolute_ndss_url(href));
     }
 
     // Fallback: any link to a .pdf file in wp-content/uploads
@@ -178,6 +248,28 @@ fn get_pdf_url(document: &Html) -> Option<String> {
     }
 
     None
+}
+
+fn find_labeled_paragraph<'a>(document: &'a Html, label: &str) -> Option<ElementRef<'a>> {
+    let paragraph_selector = Selector::parse("p").ok()?;
+    let strong_selector = Selector::parse("strong").ok()?;
+    document.select(&paragraph_selector).find(|paragraph| {
+        paragraph.select(&strong_selector).any(|strong| {
+            normalize_whitespace(&strong.text().collect::<Vec<_>>().join(" ")) == label
+        })
+    })
+}
+
+fn absolute_ndss_url(href: &str) -> String {
+    if href.starts_with("http") {
+        href.to_string()
+    } else {
+        format!("{NDSS_BASE_URL}{href}")
+    }
+}
+
+fn normalize_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// "Author1 (Affil), Author2 (Affil)" 形式の文字列から著者名を抽出
@@ -360,5 +452,109 @@ mod tests {
             url,
             Some("https://example.com/wp-content/uploads/2024-paper.pdf".to_string())
         );
+    }
+
+    #[test]
+    fn test_parse_paper_detail_2014_legacy_page() {
+        let html = r#"
+        <h1>On the Mismanagement and Maliciousness of Networks</h1>
+        <section class="new-wrapper">
+          <p class="ndss_authors"><strong>Author(s): </strong>Jing Zhang, Zakir Durumeric, Michael Bailey, Mingyan Liu and Manish Karir</p>
+          <p class="ndss_downloads"><strong>Download: </strong><a href="/wp-content/uploads/2017/09/01_1_1.pdf">Paper</a> (PDF)</p>
+          <p class="ndss_additional"><strong>Additional Documents: </strong><a href="/wp-content/uploads/2017/09/01_1_slides_0.pdf">Slides</a></p>
+          <h2>Abstract:</h2>
+          <p>We systematically explore the widely held belief that mismanaged networks are responsible for security incidents.</p>
+        </section>
+        "#;
+        let entry = PaperListEntry {
+            title: "List title".to_string(),
+            authors: vec!["List Author".to_string()],
+            detail_url:
+                "https://www.ndss-symposium.org/ndss2014/ndss-2014-programme/mismanagement/"
+                    .to_string(),
+            track: Some("Conference".to_string()),
+        };
+
+        let paper = parse_paper_detail(html, &entry, "ndss", 2014).unwrap();
+        assert_eq!(
+            paper.authors,
+            vec![
+                "Jing Zhang",
+                "Zakir Durumeric",
+                "Michael Bailey",
+                "Mingyan Liu",
+                "Manish Karir"
+            ]
+        );
+        assert_eq!(
+            paper.r#abstract,
+            "We systematically explore the widely held belief that mismanaged networks are responsible for security incidents."
+        );
+        assert_eq!(
+            paper.pdf_url,
+            Some(
+                "https://www.ndss-symposium.org/wp-content/uploads/2017/09/01_1_1.pdf".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn test_parse_paper_detail_2017_legacy_page_with_breaks_and_nbsp() {
+        let html = r#"
+        <h1>Indiscreet Logs: Diffie-Hellman Backdoors in TLS</h1>
+        <section class="new-wrapper">
+          <p class="wp-block-paragraph"><strong>Author(s): </strong><br>Kristen Dorey, Nicholas Chang-Fong and Aleksander Essex</p>
+          <p class="wp-block-paragraph"><strong>Download: </strong><a href="/wp-content/uploads/2017/09/ndss2017_04A-2_Dorey_paper.pdf">Paper</a> (PDF)</p>
+          <h2 class="wp-block-heading">Abstract:</h2>
+          <p class="wp-block-paragraph">Software implementations of discrete logarithm&nbsp;based cryptosystems make a trust assumption.</p>
+          <p class="wp-block-paragraph">We examine&nbsp;situations where it may not be justified.</p>
+          <h2>Downloads</h2>
+          <p>This paragraph is not part of the abstract.</p>
+        </section>
+        "#;
+        let entry = PaperListEntry {
+            title: "List title".to_string(),
+            authors: Vec::new(),
+            detail_url:
+                "https://www.ndss-symposium.org/ndss2017/ndss-2017-programme/indiscreet-logs/"
+                    .to_string(),
+            track: Some("Conference".to_string()),
+        };
+
+        let paper = parse_paper_detail(html, &entry, "ndss", 2017).unwrap();
+        assert_eq!(
+            paper.authors,
+            vec!["Kristen Dorey", "Nicholas Chang-Fong", "Aleksander Essex"]
+        );
+        assert_eq!(
+            paper.r#abstract,
+            "Software implementations of discrete logarithm based cryptosystems make a trust assumption. We examine situations where it may not be justified."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_paper_detail_pdf_entry_does_not_fetch_http() {
+        let entry = PaperListEntry {
+            title: "PDF-only Paper".to_string(),
+            authors: vec!["Alice Smith".to_string(), "Bob Jones".to_string()],
+            detail_url: "not-a-valid-http-url.pdf".to_string(),
+            track: Some("Conference".to_string()),
+        };
+
+        let paper = fetch_paper_detail(
+            &reqwest::Client::new(),
+            &entry,
+            "ndss",
+            2018,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(paper.title, entry.title);
+        assert_eq!(paper.authors, entry.authors);
+        assert!(paper.r#abstract.is_empty());
+        assert_eq!(paper.url, entry.detail_url);
+        assert_eq!(paper.pdf_url, Some(entry.detail_url));
     }
 }

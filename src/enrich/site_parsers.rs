@@ -130,18 +130,19 @@ fn parse_openreview(document: &Html) -> Option<String> {
 
 /// NDSS: `div.paper-data` 内の2番目の `<p>` 要素
 fn parse_ndss(document: &Html) -> Option<String> {
-    let div_sel = Selector::parse("div.paper-data").ok()?;
-    let p_sel = Selector::parse("p").ok()?;
-    let div = document.select(&div_sel).next()?;
-
-    // 2番目の <p> 要素を取得（1番目は著者情報）
-    let p_el = div.select(&p_sel).nth(1)?;
-    let text: String = p_el.text().collect::<Vec<_>>().join(" ");
-    if text.trim().is_empty() {
-        None
-    } else {
-        Some(text)
+    if let Ok(div_sel) = Selector::parse("div.paper-data")
+        && let Ok(p_sel) = Selector::parse("p")
+        && let Some(div) = document.select(&div_sel).next()
+        && let Some(p_el) = div.select(&p_sel).nth(1)
+    {
+        // 2番目の <p> 要素を取得（1番目は著者情報）
+        let text: String = p_el.text().collect::<Vec<_>>().join(" ");
+        if !text.trim().is_empty() {
+            return Some(text);
+        }
     }
+
+    crate::scraper::ndss::paper_page::get_legacy_abstract(document)
 }
 
 /// USENIX: `.field-name-field-paper-description .field-item`
@@ -337,6 +338,25 @@ mod tests {
         let doc = Html::parse_document(html);
         let result = parse_ndss(&doc);
         assert_eq!(result, Some("This is the NDSS abstract text.".to_string()));
+    }
+
+    #[test]
+    fn test_parse_ndss_legacy_abstract_paragraphs() {
+        let html = r#"
+        <section class="new-wrapper">
+            <h2>Abstract:</h2>
+            <p>First paragraph with&nbsp;non-breaking spaces.</p>
+            <p>Second paragraph.</p>
+            <h2>Downloads</h2>
+            <p>Not part of the abstract.</p>
+        </section>
+        "#;
+        let doc = Html::parse_document(html);
+        let result = parse_ndss(&doc);
+        assert_eq!(
+            result,
+            Some("First paragraph with non-breaking spaces. Second paragraph.".to_string())
+        );
     }
 
     #[test]

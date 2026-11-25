@@ -121,7 +121,93 @@ fn parse_paper_list(html: &str, base_url: &str) -> Result<Vec<PaperListEntry>> {
         }
     }
 
+    // Legacy NDSS listings (2014-2018) use a single-paper block and link either
+    // to a programme page or directly to a PDF.
+    if entries.is_empty() {
+        let item_selector = Selector::parse("div.single-paper").unwrap();
+        let inner_selector = Selector::parse("div.inner-wrap").unwrap();
+        let title_selector = Selector::parse("h3").unwrap();
+        let authors_selector = Selector::parse("p").unwrap();
+        let link_selector = Selector::parse("p.paper-link-abs a").unwrap();
+        let mut excluded_workshops = 0usize;
+
+        for item in document.select(&item_selector) {
+            let Some(inner) = item.select(&inner_selector).next() else {
+                continue;
+            };
+            let Some(title_el) = inner.select(&title_selector).next() else {
+                continue;
+            };
+            let title = title_el
+                .text()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim()
+                .to_string();
+            if title.is_empty() {
+                continue;
+            }
+
+            let Some(link_el) = item.select(&link_selector).next() else {
+                continue;
+            };
+            let Some(href) = link_el.value().attr("href") else {
+                continue;
+            };
+            if is_workshop_programme_url(href) {
+                excluded_workshops += 1;
+                continue;
+            }
+
+            // Some entries carry an empty <p> before the author line (e.g. NDSS 2018 "Veil").
+            let authors = inner
+                .select(&authors_selector)
+                .map(|authors_el| {
+                    let raw = authors_el.text().collect::<Vec<_>>().join(" ");
+                    parse_plain_authors(&raw)
+                })
+                .find(|authors| !authors.is_empty())
+                .unwrap_or_default();
+            let detail_url = if href.starts_with("http") {
+                href.to_string()
+            } else {
+                format!("{}{}", base_url, href)
+            };
+
+            entries.push(PaperListEntry {
+                title,
+                authors,
+                detail_url,
+                track: Some("Conference".to_string()),
+            });
+        }
+
+        tracing::debug!(
+            excluded_workshops,
+            "Excluded workshop papers from legacy NDSS listing"
+        );
+    }
+
     Ok(entries)
+}
+
+fn is_workshop_programme_url(url: &str) -> bool {
+    url.split(['/', '?', '#'])
+        .find_map(|segment| segment.strip_suffix("-programme"))
+        .is_some_and(|programme| {
+            !programme
+                .strip_prefix("ndss-")
+                .is_some_and(|year| !year.is_empty() && year.chars().all(|ch| ch.is_ascii_digit()))
+        })
+}
+
+pub(super) fn parse_plain_authors(raw: &str) -> Vec<String> {
+    raw.split(", ")
+        .flat_map(|part| part.split(" and "))
+        .map(str::trim)
+        .filter(|author| !author.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// "Author1 (Affiliation1), Author2 (Affiliation2)" 形式の著者文字列をパース
@@ -281,6 +367,104 @@ mod tests {
         let entries = parse_paper_list(html, "https://www.ndss-symposium.org").unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].title, "Real Paper");
+    }
+
+    #[test]
+    fn test_parse_paper_list_2018_single_paper_with_pdf() {
+        let html = r#"
+        <div class="wp-block-group single-paper">
+          <div class="wp-block-group inner-wrap"><div class="wp-block-group__inner-container">
+            <h3 class="wp-block-heading">IoTFuzzer: Discovering Memory Corruptions in IoT Through App-based Fuzzing</h3>
+            <p class="wp-block-paragraph">Jiongyi Chen, Wenrui Diao and Kehuan Zhang</p>
+          </div></div>
+          <p class="paper-link-abs wp-block-paragraph"><strong>
+            <a href="/wp-content/uploads/2018/02/ndss2018_01A-1_Chen_paper.pdf">Read More</a>
+          </strong></p>
+        </div>
+        "#;
+
+        let entries = parse_paper_list(html, "https://www.ndss-symposium.org").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].title,
+            "IoTFuzzer: Discovering Memory Corruptions in IoT Through App-based Fuzzing"
+        );
+        assert_eq!(
+            entries[0].authors,
+            vec!["Jiongyi Chen", "Wenrui Diao", "Kehuan Zhang"]
+        );
+        assert_eq!(
+            entries[0].detail_url,
+            "https://www.ndss-symposium.org/wp-content/uploads/2018/02/ndss2018_01A-1_Chen_paper.pdf"
+        );
+    }
+
+    #[test]
+    fn test_parse_paper_list_single_paper_skips_empty_paragraph() {
+        let html = r#"
+        <div class="wp-block-group single-paper">
+          <div class="wp-block-group inner-wrap"><div class="wp-block-group__inner-container">
+            <h3 class="wp-block-heading">Veil: Private Browsing Semantics Without Browser-side Assistance</h3>
+            <p class="wp-block-paragraph"></p>
+            <p class="wp-block-paragraph">Frank Wang, James Mickens and Nickolai Zeldovich</p>
+          </div></div>
+          <p class="paper-link-abs wp-block-paragraph"><strong>
+            <a href="/wp-content/uploads/2018/02/ndss2018_06B-4_Wang_paper.pdf">Read More</a>
+          </strong></p>
+        </div>
+        "#;
+
+        let entries = parse_paper_list(html, "https://www.ndss-symposium.org").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].authors,
+            vec!["Frank Wang", "James Mickens", "Nickolai Zeldovich"]
+        );
+    }
+
+    #[test]
+    fn test_parse_paper_list_2014_excludes_workshops() {
+        let html = r#"
+        <div class="wp-block-group single-paper">
+          <div class="wp-block-group inner-wrap"><div class="wp-block-group__inner-container">
+            <h3>Conference Paper One</h3>
+            <p>Alice Smith, Bob Jones and Carol Lee</p>
+          </div></div>
+          <p class="paper-link-abs"><a href="/ndss2014/ndss-2014-programme/paper-one/">Read More</a></p>
+        </div>
+        <div class="wp-block-group single-paper">
+          <div class="wp-block-group inner-wrap"><div class="wp-block-group__inner-container">
+            <h3>Conference Paper Two</h3>
+            <p>David Chen and Erin Brown</p>
+          </div></div>
+          <p class="paper-link-abs"><a href="https://www.ndss-symposium.org/ndss2014/ndss-2014-programme/paper-two/">Read More</a></p>
+        </div>
+        <div class="wp-block-group single-paper">
+          <div class="wp-block-group inner-wrap"><div class="wp-block-group__inner-container">
+            <h3>USEC Workshop Paper</h3><p>Workshop Author</p>
+          </div></div>
+          <p class="paper-link-abs"><a href="/ndss2014/ndss-2014-usec-programme/usec-paper/">Read More</a></p>
+        </div>
+        <div class="wp-block-group single-paper">
+          <div class="wp-block-group inner-wrap"><div class="wp-block-group__inner-container">
+            <h3>SENT Workshop Paper</h3><p>Workshop Author</p>
+          </div></div>
+          <p class="paper-link-abs"><a href="/ndss2014/ndss-2014-sent-programme/sent-paper/">Read More</a></p>
+        </div>
+        "#;
+
+        let entries = parse_paper_list(html, "https://www.ndss-symposium.org").unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].title, "Conference Paper One");
+        assert_eq!(entries[1].title, "Conference Paper Two");
+        assert_eq!(
+            entries[0].authors,
+            vec!["Alice Smith", "Bob Jones", "Carol Lee"]
+        );
+        assert_eq!(
+            entries[0].detail_url,
+            "https://www.ndss-symposium.org/ndss2014/ndss-2014-programme/paper-one/"
+        );
     }
 
     #[test]
