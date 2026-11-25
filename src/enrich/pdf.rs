@@ -1,7 +1,12 @@
 use anyhow::Result;
 use regex::Regex;
 use reqwest::Client;
-use std::{io::ErrorKind, process::Stdio, sync::Once, time::Duration};
+use std::{
+    io::ErrorKind,
+    process::Stdio,
+    sync::{LazyLock, Once},
+    time::Duration,
+};
 use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
 
 static PDFTOTEXT_NOT_FOUND_WARNING: Once = Once::new();
@@ -163,23 +168,38 @@ async fn try_fetch_and_extract(client: &Client, url: &str) -> Result<String> {
 
     if !text.is_empty() {
         let abstract_text = extract_abstract_from_text(&text)?;
-        if !abstract_text.is_empty() {
+        if !abstract_text.is_empty() && is_clean_abstract(&abstract_text) {
             return Ok(abstract_text);
         }
     }
 
     // pdf-extract が読めなかった，または読めても要旨が見つからなかった（字形の取り違え等）
-    let fallback_text = extract_with_pdftotext(&bytes, "pdftotext").await?;
-    let abstract_text = extract_abstract_from_text(&fallback_text)?;
-    if !abstract_text.is_empty() {
-        tracing::debug!("pdftotext fallback succeeded for {}", url);
+    let raw_text = extract_with_pdftotext(&bytes, "pdftotext", true).await?;
+    let raw_abstract = extract_abstract_from_text(&raw_text)?;
+    if !raw_abstract.is_empty() && is_clean_abstract(&raw_abstract) {
+        tracing::debug!("pdftotext -raw fallback succeeded for {}", url);
+        return Ok(raw_abstract);
     }
-    Ok(abstract_text)
+
+    let fallback_text = extract_with_pdftotext(&bytes, "pdftotext", false).await?;
+    let fallback_abstract = extract_abstract_from_text(&fallback_text)?;
+    if !fallback_abstract.is_empty() && is_clean_abstract(&fallback_abstract) {
+        tracing::debug!("pdftotext fallback succeeded for {}", url);
+        return Ok(fallback_abstract);
+    }
+
+    Ok(String::new())
 }
 
-async fn extract_with_pdftotext(bytes: &[u8], program: &str) -> Result<String> {
-    let mut child = match Command::new(program)
-        .args(["-f", "1", "-l", "2", "-enc", "UTF-8", "-", "-"])
+async fn extract_with_pdftotext(bytes: &[u8], program: &str, raw: bool) -> Result<String> {
+    let mut command = Command::new(program);
+    command.args(["-f", "1", "-l", "2", "-enc", "UTF-8"]);
+    if raw {
+        command.arg("-raw");
+    }
+
+    let mut child = match command
+        .args(["-", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -247,18 +267,26 @@ async fn extract_with_pdftotext(bytes: &[u8], program: &str) -> Result<String> {
 
 /// 終端の見出しが見つからなかった場合に要旨として認める最大長（バイト）
 const MAX_UNTERMINATED_LEN: usize = 3000;
+static EMAIL_ADDRESS_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:\{[\w.+-]+(?:,[\w.+-]+)+\}|[\w.+-]+)@[\w-]+(?:\.[\w-]+)+")
+        .expect("email address regex must be valid")
+});
 
 /// テキストから "Abstract" セクションを抽出する
 fn extract_abstract_from_text(text: &str) -> Result<String> {
     let abstract_re = Regex::new(
         // `I\s?NTRODUCTION`: pdftotext は小型大文字の見出しを "I NTRODUCTION" と分けて出すことがある
-        r"(?i)\babstract\b[\s\.:—\-]*\n?([\s\S]+?)(?:\n\s*(?:1[\.\s]?\s*Introduction|Keywords|Index Terms|Categories|CCS Concepts|I\.\s+I\s?NTRODUCTION)\b|\z)",
+        r"(?m)^[ \t]*(?:ABSTRACT|Abstract)\b[ \t]*[\.:—\-]?[ \t]*(?:\n|([A-Z]))([\s\S]+?)(?:\n\s*(?:1[\.\s]?\s*Introduction|Keywords|Index Terms|Categories|CCS Concepts|I\.\s+I\s?NTRODUCTION)\b|\z)",
     )?;
 
     if let Some(caps) = abstract_re.captures(text)
-        && let Some(m) = caps.get(1)
+        && let Some(m) = caps.get(2)
     {
-        let abstract_text = normalize_pdf_text(m.as_str());
+        let body = match caps.get(1) {
+            Some(first_character) => format!("{}{}", first_character.as_str(), m.as_str()),
+            None => m.as_str().to_string(),
+        };
+        let abstract_text = normalize_pdf_text(&body);
         // 終端の見出しが見つからず本文まで飲み込んだものは要旨として扱わない
         let reached_end = m.end() == text.len();
         if abstract_text.len() > 50 && !(reached_end && abstract_text.len() > MAX_UNTERMINATED_LEN)
@@ -268,6 +296,18 @@ fn extract_abstract_from_text(text: &str) -> Result<String> {
     }
 
     Ok(String::new())
+}
+
+fn is_clean_abstract(text: &str) -> bool {
+    if EMAIL_ADDRESS_RE.is_match(text) {
+        return false;
+    }
+
+    text.chars().next().is_some_and(|first_character| {
+        first_character.is_ascii_uppercase()
+            || first_character.is_ascii_digit()
+            || matches!(first_character, '"' | '“' | '‘' | '\'')
+    })
 }
 
 /// PDF抽出テキストの正規化（改行・空白の整理）
@@ -341,10 +381,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_with_pdftotext_missing_program_returns_empty() {
-        let text =
-            extract_with_pdftotext(b"not a PDF", "pdftotext-does-not-exist-conf-scraper-test")
-                .await
-                .unwrap();
+        let text = extract_with_pdftotext(
+            b"not a PDF",
+            "pdftotext-does-not-exist-conf-scraper-test",
+            false,
+        )
+        .await
+        .unwrap();
 
         assert!(text.is_empty());
     }
@@ -360,7 +403,28 @@ mod tests {
             return;
         }
 
-        let text = extract_with_pdftotext(&minimal_pdf_with_abstract(), "pdftotext")
+        let text = extract_with_pdftotext(&minimal_pdf_with_abstract(), "pdftotext", false)
+            .await
+            .unwrap();
+        let abstract_text = extract_abstract_from_text(&text).unwrap();
+
+        assert!(!text.contains('\x0c'));
+        assert!(abstract_text.contains("compact fallback extraction test"));
+        assert!(!abstract_text.contains("Introduction"));
+    }
+
+    #[tokio::test]
+    async fn test_extract_with_pdftotext_raw_extracts_abstract_from_generated_pdf() {
+        if tokio::process::Command::new("pdftotext")
+            .arg("-v")
+            .output()
+            .await
+            .is_err()
+        {
+            return;
+        }
+
+        let text = extract_with_pdftotext(&minimal_pdf_with_abstract(), "pdftotext", true)
             .await
             .unwrap();
         let abstract_text = extract_abstract_from_text(&text).unwrap();
@@ -387,6 +451,90 @@ In recent years, there has been growing interest..."#;
         assert!(result.contains("novel method"));
         assert!(result.contains("simple yet effective"));
         assert!(!result.contains("Introduction"));
+    }
+
+    #[test]
+    fn test_extract_abstract_ignores_extended_abstract_in_title() {
+        let text = r#"A Secure Protocol (Extended Abstract)
+
+Philippe Golle Nagendra Modadugu
+pgolle@cs.stanford.edu nagendra@cs.stanford.edu
+
+Abstract
+We propose a secure protocol that provides strong guarantees while remaining practical for deployed systems.
+
+1. Introduction
+The protocol builds on earlier work."#;
+
+        let result = extract_abstract_from_text(text).unwrap();
+        assert_eq!(
+            result,
+            "We propose a secure protocol that provides strong guarantees while remaining practical for deployed systems."
+        );
+        assert!(!result.contains("Philippe"));
+        assert!(!result.contains('@'));
+    }
+
+    #[test]
+    fn test_extract_abstract_requires_line_start_heading() {
+        let text = "This paper discusses the abstract concept of network resilience and presents a detailed evaluation of several practical defenses.";
+
+        assert_eq!(extract_abstract_from_text(text).unwrap(), "");
+    }
+
+    #[test]
+    fn test_extract_abstract_ieee_inline_body() {
+        let text = "Abstract—We present a practical method that improves network resilience under sustained attacks in large deployments.\n\nI. INTRODUCTION\nPrior work has focused on smaller systems.";
+
+        assert_eq!(
+            extract_abstract_from_text(text).unwrap(),
+            "We present a practical method that improves network resilience under sustained attacks in large deployments."
+        );
+    }
+
+    #[test]
+    fn test_extract_abstract_uppercase_heading() {
+        let text = "ABSTRACT\nWe describe a reliable system for collecting conference papers and extracting their metadata at scale.\n\n1. Introduction\nThe system uses several data sources.";
+
+        assert_eq!(
+            extract_abstract_from_text(text).unwrap(),
+            "We describe a reliable system for collecting conference papers and extracting their metadata at scale."
+        );
+    }
+
+    #[test]
+    fn test_is_clean_abstract_rejects_email_address() {
+        assert!(!is_clean_abstract(
+            "We propose a secure protocol. Contact alice.smith+paper@example.edu for details."
+        ));
+    }
+
+    #[test]
+    fn test_is_clean_abstract_rejects_braced_email_address() {
+        assert!(!is_clean_abstract(
+            "We propose a secure protocol by {zxu8,kuiren}@buffalo.edu and evaluate it."
+        ));
+    }
+
+    #[test]
+    fn test_is_clean_abstract_rejects_lowercase_start() {
+        assert!(!is_clean_abstract(
+            "we propose a secure protocol for large distributed systems."
+        ));
+    }
+
+    #[test]
+    fn test_is_clean_abstract_rejects_invalid_leading_character() {
+        assert!(!is_clean_abstract(
+            ") Philippe Golle Nagendra Modadugu We propose a secure protocol."
+        ));
+    }
+
+    #[test]
+    fn test_is_clean_abstract_accepts_clean_text() {
+        assert!(is_clean_abstract(
+            "We propose a secure protocol for large distributed systems."
+        ));
     }
 
     #[test]
