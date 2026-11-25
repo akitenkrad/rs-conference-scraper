@@ -13,6 +13,20 @@ use ss_tools::structs::PaperField;
 use ss_tools::{QueryParams, SemanticScholar};
 use std::path::Path;
 
+/// 小文字化＋句読点除去で2つのタイトルを比較する
+pub(crate) fn fuzzy_title_match(a: &str, b: &str) -> bool {
+    let normalize = |s: &str| -> String {
+        s.to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    normalize(a) == normalize(b)
+}
+
 // ANSI カラーコード
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[1;33m";
@@ -402,4 +416,25 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fuzzy_title_match;
+
+    #[test]
+    fn fuzzy_title_match_ignores_case_punctuation_and_whitespace() {
+        assert!(fuzzy_title_match(
+            "Privacy-Preserving Sharing and Correlation of Security Alerts",
+            "  PRIVACY-PRESERVING sharing, and correlation of security alerts!  ",
+        ));
+    }
+
+    #[test]
+    fn fuzzy_title_match_rejects_different_titles() {
+        assert!(!fuzzy_title_match(
+            "Privacy-Preserving Sharing and Correlation of Security Alerts",
+            "La sécurité des réseaux sans fil",
+        ));
+    }
 }

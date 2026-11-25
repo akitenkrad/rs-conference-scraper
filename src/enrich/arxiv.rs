@@ -1,3 +1,4 @@
+use super::fuzzy_title_match;
 use anyhow::Result;
 use reqwest::Client;
 
@@ -55,18 +56,4 @@ pub async fn fetch_abstract_via_arxiv(client: &Client, title: &str) -> Result<St
         .to_string();
 
     Ok(summary)
-}
-
-/// 小文字化＋句読点除去で2つのタイトルを比較する
-fn fuzzy_title_match(a: &str, b: &str) -> bool {
-    let normalize = |s: &str| -> String {
-        s.to_lowercase()
-            .chars()
-            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-            .collect::<String>()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
-    normalize(a) == normalize(b)
 }
