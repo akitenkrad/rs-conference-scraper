@@ -161,16 +161,20 @@ async fn try_fetch_and_extract(client: &Client, url: &str) -> Result<String> {
         }
     };
 
-    if text.is_empty() {
-        let fallback_text = extract_with_pdftotext(&bytes, "pdftotext").await?;
-        let abstract_text = extract_abstract_from_text(&fallback_text)?;
+    if !text.is_empty() {
+        let abstract_text = extract_abstract_from_text(&text)?;
         if !abstract_text.is_empty() {
-            tracing::debug!("pdftotext fallback succeeded for {}", url);
+            return Ok(abstract_text);
         }
-        return Ok(abstract_text);
     }
 
-    extract_abstract_from_text(&text)
+    // pdf-extract が読めなかった，または読めても要旨が見つからなかった（字形の取り違え等）
+    let fallback_text = extract_with_pdftotext(&bytes, "pdftotext").await?;
+    let abstract_text = extract_abstract_from_text(&fallback_text)?;
+    if !abstract_text.is_empty() {
+        tracing::debug!("pdftotext fallback succeeded for {}", url);
+    }
+    Ok(abstract_text)
 }
 
 async fn extract_with_pdftotext(bytes: &[u8], program: &str) -> Result<String> {
@@ -241,17 +245,24 @@ async fn extract_with_pdftotext(bytes: &[u8], program: &str) -> Result<String> {
     }
 }
 
+/// 終端の見出しが見つからなかった場合に要旨として認める最大長（バイト）
+const MAX_UNTERMINATED_LEN: usize = 3000;
+
 /// テキストから "Abstract" セクションを抽出する
 fn extract_abstract_from_text(text: &str) -> Result<String> {
     let abstract_re = Regex::new(
-        r"(?i)\babstract\b[\s\.:—\-]*\n?([\s\S]+?)(?:\n\s*(?:1[\.\s]?\s*Introduction|Keywords|Index Terms|Categories|CCS Concepts|I\.\s+INTRODUCTION)\b|\z)",
+        // `I\s?NTRODUCTION`: pdftotext は小型大文字の見出しを "I NTRODUCTION" と分けて出すことがある
+        r"(?i)\babstract\b[\s\.:—\-]*\n?([\s\S]+?)(?:\n\s*(?:1[\.\s]?\s*Introduction|Keywords|Index Terms|Categories|CCS Concepts|I\.\s+I\s?NTRODUCTION)\b|\z)",
     )?;
 
     if let Some(caps) = abstract_re.captures(text)
         && let Some(m) = caps.get(1)
     {
         let abstract_text = normalize_pdf_text(m.as_str());
-        if abstract_text.len() > 50 {
+        // 終端の見出しが見つからず本文まで飲み込んだものは要旨として扱わない
+        let reached_end = m.end() == text.len();
+        if abstract_text.len() > 50 && !(reached_end && abstract_text.len() > MAX_UNTERMINATED_LEN)
+        {
             return Ok(abstract_text);
         }
     }
@@ -477,5 +488,34 @@ Keywords: deep learning, NLP, survey"#;
     fn test_collect_no_pdf_url() {
         let urls = collect_candidate_urls(None, "https://doi.org/10.1109/SP.2024.001");
         assert_eq!(urls, vec!["https://doi.org/10.1109/SP.2024.001"]);
+    }
+
+    #[test]
+    fn test_extract_abstract_stops_at_split_small_caps_introduction() {
+        // pdftotext が小型大文字の見出しを分割して出す形（USENIX Security 2008 chou.pdf）
+        let text = "Abstract— Large-scale bandwidth-based distributed\n\
+                    denial-of-service (DDoS) attacks can quickly knock out\n\
+                    substantial parts of a network before reactive defenses respond.\n\n\
+                    I. I NTRODUCTION\n\
+                    A coordinated attack can potentially disable a network.";
+        let result = extract_abstract_from_text(text).unwrap();
+        assert!(result.starts_with("Large-scale bandwidth-based"));
+        assert!(result.ends_with("reactive defenses respond."));
+        assert!(!result.contains("coordinated attack"));
+    }
+
+    #[test]
+    fn test_extract_abstract_rejects_long_unterminated_match() {
+        let body = "word ".repeat(1000);
+        let text = format!("Abstract\n{body}");
+        assert_eq!(extract_abstract_from_text(&text).unwrap(), "");
+    }
+
+    #[test]
+    fn test_extract_abstract_keeps_short_unterminated_match() {
+        let text =
+            "Abstract\nThis abstract has no following section heading but is long enough to keep.";
+        let result = extract_abstract_from_text(text).unwrap();
+        assert!(result.starts_with("This abstract has no following"));
     }
 }
