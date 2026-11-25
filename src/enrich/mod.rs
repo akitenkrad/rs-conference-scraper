@@ -27,6 +27,15 @@ pub(crate) fn fuzzy_title_match(a: &str, b: &str) -> bool {
     normalize(a) == normalize(b)
 }
 
+fn select_pdf_url_for_update<'a>(
+    s2_pdf_url: Option<&'a str>,
+    fetched_pdf_url: Option<&'a str>,
+) -> Option<&'a str> {
+    s2_pdf_url
+        .filter(|url| !url.is_empty())
+        .or_else(|| fetched_pdf_url.filter(|url| !url.is_empty()))
+}
+
 // ANSI カラーコード
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[1;33m";
@@ -232,7 +241,9 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
         ]);
 
         let mut abstract_text = String::new();
-        let mut pdf_url: Option<String> = None;
+        let mut s2_pdf_url: Option<String> = None;
+        let mut html_pdf_url: Option<String> = None;
+        let mut fetched_pdf_url: Option<String> = None;
         let mut source = "none";
         let mut tier_empty_count: usize = 0;
         let mut tier_error_count: usize = 0;
@@ -245,7 +256,10 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
         {
             Ok(ss_paper) => {
                 let ss_abstract = ss_paper.abstract_text.unwrap_or_default();
-                pdf_url = ss_paper.open_access_pdf.and_then(|p| p.url);
+                s2_pdf_url = ss_paper
+                    .open_access_pdf
+                    .and_then(|p| p.url)
+                    .filter(|url| !url.is_empty());
 
                 if !ss_abstract.is_empty() {
                     abstract_text = ss_abstract;
@@ -335,7 +349,8 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
                     source = "html";
                     tracing::debug!("Tier5(HTML) hit for '{}'", paper.title);
                 }
-                Ok(html_scraper::HtmlResult::Empty) => {
+                Ok(html_scraper::HtmlResult::Empty { pdf_url }) => {
+                    html_pdf_url = pdf_url;
                     tier_empty_count += 1;
                     tracing::debug!("HTML scraping returned empty for '{}'", paper.title);
                 }
@@ -346,14 +361,19 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
             }
         }
 
-        // Tier 6: PDF直接抽出（S2由来のpdf_url + paper.urlの両方を試行）
+        // Tier 6: PDF直接抽出（明示候補 + paper.urlからの推定候補を順に試行）
         if abstract_text.is_empty() {
             pb.set_message(counts.build_msg(&ActiveTier::Pdf));
-            match pdf::fetch_abstract_via_pdf_urls(&http_client, pdf_url.as_deref(), &paper.url)
-                .await
+            let pdf_candidates = [
+                s2_pdf_url.as_deref().unwrap_or_default(),
+                paper.pdf_url.as_deref().unwrap_or_default(),
+                html_pdf_url.as_deref().unwrap_or_default(),
+            ];
+            match pdf::fetch_abstract_via_pdf_urls(&http_client, &pdf_candidates, &paper.url).await
             {
-                Ok(text) if !text.is_empty() => {
+                Ok((text, successful_pdf_url)) if !text.is_empty() => {
                     abstract_text = text;
+                    fetched_pdf_url = successful_pdf_url;
                     source = "pdf";
                     tracing::debug!("Tier6(PDF) hit for '{}'", paper.title);
                 }
@@ -375,7 +395,7 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
                 &paper.conference,
                 paper.year,
                 &abstract_text,
-                pdf_url.as_deref(),
+                select_pdf_url_for_update(s2_pdf_url.as_deref(), fetched_pdf_url.as_deref()),
             )?;
             match source {
                 "s2" => counts.s2 += 1,
@@ -420,7 +440,7 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::fuzzy_title_match;
+    use super::{fuzzy_title_match, select_pdf_url_for_update};
 
     #[test]
     fn fuzzy_title_match_ignores_case_punctuation_and_whitespace() {
@@ -436,5 +456,25 @@ mod tests {
             "Privacy-Preserving Sharing and Correlation of Security Alerts",
             "La sécurité des réseaux sans fil",
         ));
+    }
+
+    #[test]
+    fn select_pdf_url_for_update_prefers_non_empty_s2_url() {
+        assert_eq!(
+            select_pdf_url_for_update(
+                Some("https://s2.example/paper.pdf"),
+                Some("https://fetched.example/paper.pdf")
+            ),
+            Some("https://s2.example/paper.pdf")
+        );
+    }
+
+    #[test]
+    fn select_pdf_url_for_update_falls_back_to_fetched_url() {
+        assert_eq!(
+            select_pdf_url_for_update(Some(""), Some("https://fetched.example/paper.pdf")),
+            Some("https://fetched.example/paper.pdf")
+        );
+        assert_eq!(select_pdf_url_for_update(None, None), None);
     }
 }

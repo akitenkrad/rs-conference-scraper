@@ -8,7 +8,12 @@ pub enum HtmlResult {
     /// HTML直接抽出で取得できた
     Direct(String),
     /// 取得できなかった
-    Empty,
+    Empty { pdf_url: Option<String> },
+}
+
+struct HtmlExtraction {
+    abstract_text: Option<String>,
+    pdf_url: Option<String>,
 }
 
 /// 論文のURLからHTMLを取得し，abstractを直接抽出する
@@ -22,20 +27,20 @@ pub async fn fetch_abstract_via_html(
 ) -> Result<HtmlResult> {
     // URLが空の場合はスキップ
     if url.is_empty() {
-        return Ok(HtmlResult::Empty);
+        return Ok(HtmlResult::Empty { pdf_url: None });
     }
 
     let resp = match client.get(url).send().await {
         Ok(r) => r,
         Err(e) => {
             tracing::debug!("HTML fetch failed for '{}': {}", url, e);
-            return Ok(HtmlResult::Empty);
+            return Ok(HtmlResult::Empty { pdf_url: None });
         }
     };
 
     if !resp.status().is_success() {
         tracing::debug!("HTML fetch returned status {} for '{}'", resp.status(), url);
-        return Ok(HtmlResult::Empty);
+        return Ok(HtmlResult::Empty { pdf_url: None });
     }
 
     // リダイレクト後の最終URLを取得（DOI → 出版社サイトの解決用）
@@ -45,18 +50,21 @@ pub async fn fetch_abstract_via_html(
         Ok(b) => b,
         Err(e) => {
             tracing::debug!("HTML body read failed for '{}': {}", url, e);
-            return Ok(HtmlResult::Empty);
+            return Ok(HtmlResult::Empty { pdf_url: None });
         }
     };
 
-    Ok(match extract_abstract_from_html(&final_url, &body) {
+    let extraction = extract_abstract_from_html(&final_url, &body);
+    Ok(match extraction.abstract_text {
         Some(text) => HtmlResult::Direct(text),
-        None => HtmlResult::Empty,
+        None => HtmlResult::Empty {
+            pdf_url: extraction.pdf_url,
+        },
     })
 }
 
 /// 取得済みの HTML から abstract を抽出する（HTTP を伴わない部分）
-fn extract_abstract_from_html(final_url: &str, body: &str) -> Option<String> {
+fn extract_abstract_from_html(final_url: &str, body: &str) -> HtmlExtraction {
     let document = Html::parse_document(body);
 
     // Step 0: サイト固有パーサを試行
@@ -65,20 +73,40 @@ fn extract_abstract_from_html(final_url: &str, body: &str) -> Option<String> {
     {
         let trimmed = abstract_text.trim().to_string();
         if trimmed.len() > 50 {
-            return Some(trimmed);
+            return HtmlExtraction {
+                abstract_text: Some(trimmed),
+                pdf_url: None,
+            };
         }
     }
 
-    // サイト固有パーサが正とされるサイトでは汎用抽出に進まない
-    // （NDSS 旧ページの og:description は著者・Download 等のメタデータで，要旨ではない）
-    if site_parsers::is_site_parser_authoritative(final_url) {
-        return None;
+    let abstract_text = if site_parsers::is_site_parser_authoritative(final_url) {
+        // サイト固有パーサが正とされるサイトでは汎用抽出に進まない
+        // （NDSS 旧ページの og:description は著者・Download 等のメタデータで，要旨ではない）
+        None
+    } else {
+        // Step 1: 直接抽出を試みる
+        try_direct_extraction(&document)
+            .map(|text| text.trim().to_string())
+            .filter(|trimmed| !trimmed.is_empty())
+    };
+
+    if abstract_text.is_some() {
+        return HtmlExtraction {
+            abstract_text,
+            pdf_url: None,
+        };
     }
 
-    // Step 1: 直接抽出を試みる
-    try_direct_extraction(&document)
-        .map(|abstract_text| abstract_text.trim().to_string())
-        .filter(|trimmed| !trimmed.is_empty())
+    let pdf_url = final_url
+        .contains("ndss-symposium.org")
+        .then(|| crate::scraper::ndss::paper_page::get_pdf_url(&document))
+        .flatten();
+
+    HtmlExtraction {
+        abstract_text: None,
+        pdf_url,
+    }
 }
 
 /// HTMLから直接abstractを抽出する
@@ -188,20 +216,62 @@ mod tests {
 </div></body></html>"#;
 
     #[test]
-    fn test_ndss_legacy_page_without_abstract_does_not_fall_back_to_meta() {
+    fn test_ndss_legacy_page_without_abstract_returns_pdf_url() {
         let url =
             "https://www.ndss-symposium.org/ndss2005/space-efficient-block-storage-integrity/";
+        let result = extract_abstract_from_html(url, NDSS_LEGACY_NO_ABSTRACT);
+
+        assert_eq!(result.abstract_text, None);
         assert_eq!(
-            extract_abstract_from_html(url, NDSS_LEGACY_NO_ABSTRACT),
-            None
+            result.pdf_url.as_deref(),
+            Some(
+                "https://www.ndss-symposium.org/wp-content/uploads/2017/09/Space-Efficient-Block-Storage-Integrity-Alina-Oprea.pdf"
+            )
         );
+    }
+
+    #[test]
+    fn test_ndss_legacy_page_resolves_relative_pdf_url() {
+        let url =
+            "https://www.ndss-symposium.org/ndss2005/space-efficient-block-storage-integrity/";
+        let html = NDSS_LEGACY_NO_ABSTRACT.replace(
+            "https://www.ndss-symposium.org/wp-content/uploads/2017/09/Space-Efficient-Block-Storage-Integrity-Alina-Oprea.pdf",
+            "/wp-content/uploads/2017/09/Space-Efficient-Block-Storage-Integrity-Alina-Oprea.pdf",
+        );
+        let result = extract_abstract_from_html(url, &html);
+
+        assert_eq!(result.abstract_text, None);
+        assert_eq!(
+            result.pdf_url.as_deref(),
+            Some(
+                "https://www.ndss-symposium.org/wp-content/uploads/2017/09/Space-Efficient-Block-Storage-Integrity-Alina-Oprea.pdf"
+            )
+        );
+    }
+
+    #[test]
+    fn test_non_ndss_page_does_not_return_pdf_url() {
+        let url = "https://example.org/paper/1";
+        let html = r#"<html><body>
+<a href="https://example.org/paper.pdf">Paper</a>
+</body></html>"#;
+        let result = extract_abstract_from_html(url, html);
+
+        assert_eq!(result.abstract_text, None);
+        assert_eq!(result.pdf_url, None);
     }
 
     #[test]
     fn test_non_authoritative_site_still_uses_meta_description() {
         let url = "https://example.org/paper/1";
         let result = extract_abstract_from_html(url, NDSS_LEGACY_NO_ABSTRACT);
-        assert!(result.unwrap().starts_with("Author(s): Alina Oprea"));
+        assert!(
+            result
+                .abstract_text
+                .unwrap()
+                .starts_with("Author(s): Alina Oprea")
+        );
+        assert_eq!(result.pdf_url, None);
     }
 
     #[test]
@@ -211,7 +281,7 @@ mod tests {
 <p>We present a new approach to detecting malicious domains at the upper DNS hierarchy using passive traffic.</p>
 <h2>Downloads</h2></section></body></html>"#;
         let url = "https://www.ndss-symposium.org/ndss2012/ndss-2012-programme/some-paper/";
-        let result = extract_abstract_from_html(url, html).unwrap();
+        let result = extract_abstract_from_html(url, html).abstract_text.unwrap();
         assert!(result.starts_with("We present a new approach"));
     }
 }

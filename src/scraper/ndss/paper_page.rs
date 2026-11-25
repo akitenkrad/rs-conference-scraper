@@ -216,13 +216,13 @@ pub(crate) fn get_legacy_abstract(document: &Html) -> Option<String> {
     (!paragraphs.is_empty()).then(|| paragraphs.join(" "))
 }
 
-fn get_pdf_url(document: &Html) -> Option<String> {
+pub(crate) fn get_pdf_url(document: &Html) -> Option<String> {
     // Look for .pdf-button link first
     if let Ok(selector) = Selector::parse("a.pdf-button")
         && let Some(el) = document.select(&selector).next()
         && let Some(href) = el.value().attr("href")
     {
-        return Some(href.to_string());
+        return Some(absolute_ndss_url(href));
     }
 
     if let Some(downloads) = find_labeled_paragraph(document, "Download:")
@@ -242,7 +242,7 @@ fn get_pdf_url(document: &Html) -> Option<String> {
                 && href.ends_with(".pdf")
                 && !href.contains("slides")
             {
-                return Some(href.to_string());
+                return Some(absolute_ndss_url(href));
             }
         }
     }
@@ -451,6 +451,28 @@ mod tests {
         assert_eq!(
             url,
             Some("https://example.com/wp-content/uploads/2024-paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_pdf_url_resolves_relative_pdf_button_url() {
+        let html = r#"<a class="pdf-button" href="/wp-content/uploads/paper.pdf">Paper</a>"#;
+        let document = Html::parse_document(html);
+
+        assert_eq!(
+            get_pdf_url(&document),
+            Some("https://www.ndss-symposium.org/wp-content/uploads/paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_pdf_url_resolves_relative_upload_fallback_url() {
+        let html = r#"<a href="/wp-content/uploads/paper.pdf">Paper</a>"#;
+        let document = Html::parse_document(html);
+
+        assert_eq!(
+            get_pdf_url(&document),
+            Some("https://www.ndss-symposium.org/wp-content/uploads/paper.pdf".to_string())
         );
     }
 

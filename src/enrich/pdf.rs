@@ -9,18 +9,18 @@ const PDFTOTEXT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 複数の候補URLからPDFを取得してabstractを抽出する
 ///
-/// pdf_url（S2由来），paper_url（DBLP ee等）の順で試行し，
+/// 明示候補，paper_url（DBLP ee等）からの推定候補の順で試行し，
 /// 最初にabstractが取得できた時点で返す．
 pub async fn fetch_abstract_via_pdf_urls(
     client: &Client,
-    pdf_url: Option<&str>,
+    pdf_urls: &[&str],
     paper_url: &str,
-) -> Result<String> {
+) -> Result<(String, Option<String>)> {
     // 候補URLを収集（重複排除）
-    let candidate_urls = collect_candidate_urls(pdf_url, paper_url);
+    let candidate_urls = collect_candidate_urls(pdf_urls, paper_url);
 
     if candidate_urls.is_empty() {
-        return Ok(String::new());
+        return Ok((String::new(), None));
     }
 
     for url in &candidate_urls {
@@ -28,7 +28,7 @@ pub async fn fetch_abstract_via_pdf_urls(
         match try_fetch_and_extract(client, url).await {
             Ok(text) if !text.is_empty() => {
                 tracing::debug!("PDF abstract extracted from '{}'", url);
-                return Ok(text);
+                return Ok((text, Some(url.clone())));
             }
             Ok(_) => {
                 tracing::debug!("PDF extraction returned empty for '{}'", url);
@@ -39,11 +39,11 @@ pub async fn fetch_abstract_via_pdf_urls(
         }
     }
 
-    Ok(String::new())
+    Ok((String::new(), None))
 }
 
 /// 候補PDF URLを収集する（重複排除・優先順位付き）
-fn collect_candidate_urls(pdf_url: Option<&str>, paper_url: &str) -> Vec<String> {
+fn collect_candidate_urls(pdf_urls: &[&str], paper_url: &str) -> Vec<String> {
     let mut urls = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
@@ -53,9 +53,9 @@ fn collect_candidate_urls(pdf_url: Option<&str>, paper_url: &str) -> Vec<String>
         }
     };
 
-    // 1. S2由来のpdf_url（最優先）
-    if let Some(url) = pdf_url {
-        add(url.to_string());
+    // 1. 呼び出し元が優先順に並べた明示候補
+    for url in pdf_urls {
+        add((*url).to_string());
     }
 
     // 2. paper_urlからPDF URLを推定
@@ -467,27 +467,48 @@ Keywords: deep learning, NLP, survey"#;
     #[test]
     fn test_collect_dedup() {
         let urls = collect_candidate_urls(
-            Some("https://arxiv.org/pdf/2301.12345.pdf"),
+            &[
+                "https://arxiv.org/pdf/2301.12345.pdf",
+                "https://arxiv.org/pdf/2301.12345.pdf",
+                "https://arxiv.org/pdf/2301.12345.pdf",
+            ],
             "https://arxiv.org/abs/2301.12345",
         );
-        // S2由来のURLとarXiv変換後のURLが同一なら重複排除される
-        assert_eq!(urls.len(), 1);
+        // 明示候補間と，arXiv変換後のURLが同一なら重複排除される
+        assert_eq!(urls, vec!["https://arxiv.org/pdf/2301.12345.pdf"]);
     }
 
     #[test]
     fn test_collect_priority_order() {
         let urls = collect_candidate_urls(
-            Some("https://s2-pdf.example.com/paper.pdf"),
+            &[
+                "https://s2-pdf.example.com/paper.pdf",
+                "https://db-pdf.example.com/paper.pdf",
+                "https://html-pdf.example.com/paper.pdf",
+            ],
             "https://arxiv.org/abs/2301.12345",
         );
-        assert_eq!(urls[0], "https://s2-pdf.example.com/paper.pdf");
-        assert_eq!(urls[1], "https://arxiv.org/pdf/2301.12345.pdf");
+        assert_eq!(
+            urls,
+            vec![
+                "https://s2-pdf.example.com/paper.pdf",
+                "https://db-pdf.example.com/paper.pdf",
+                "https://html-pdf.example.com/paper.pdf",
+                "https://arxiv.org/pdf/2301.12345.pdf",
+            ]
+        );
     }
 
     #[test]
     fn test_collect_no_pdf_url() {
-        let urls = collect_candidate_urls(None, "https://doi.org/10.1109/SP.2024.001");
+        let urls = collect_candidate_urls(&[], "https://doi.org/10.1109/SP.2024.001");
         assert_eq!(urls, vec!["https://doi.org/10.1109/SP.2024.001"]);
+    }
+
+    #[test]
+    fn test_collect_ignores_empty_candidate_urls() {
+        let urls = collect_candidate_urls(&["", "https://db-pdf.example.com/paper.pdf", ""], "");
+        assert_eq!(urls, vec!["https://db-pdf.example.com/paper.pdf"]);
     }
 
     #[test]
