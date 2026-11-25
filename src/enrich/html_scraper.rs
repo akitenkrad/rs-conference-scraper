@@ -49,27 +49,36 @@ pub async fn fetch_abstract_via_html(
         }
     };
 
-    let document = Html::parse_document(&body);
+    Ok(match extract_abstract_from_html(&final_url, &body) {
+        Some(text) => HtmlResult::Direct(text),
+        None => HtmlResult::Empty,
+    })
+}
+
+/// 取得済みの HTML から abstract を抽出する（HTTP を伴わない部分）
+fn extract_abstract_from_html(final_url: &str, body: &str) -> Option<String> {
+    let document = Html::parse_document(body);
 
     // Step 0: サイト固有パーサを試行
     if let Some(abstract_text) =
-        site_parsers::try_site_specific_extraction(&final_url, &body, &document)
+        site_parsers::try_site_specific_extraction(final_url, body, &document)
     {
         let trimmed = abstract_text.trim().to_string();
         if trimmed.len() > 50 {
-            return Ok(HtmlResult::Direct(trimmed));
+            return Some(trimmed);
         }
+    }
+
+    // サイト固有パーサが正とされるサイトでは汎用抽出に進まない
+    // （NDSS 旧ページの og:description は著者・Download 等のメタデータで，要旨ではない）
+    if site_parsers::is_site_parser_authoritative(final_url) {
+        return None;
     }
 
     // Step 1: 直接抽出を試みる
-    if let Some(abstract_text) = try_direct_extraction(&document) {
-        let trimmed = abstract_text.trim().to_string();
-        if !trimmed.is_empty() {
-            return Ok(HtmlResult::Direct(trimmed));
-        }
-    }
-
-    Ok(HtmlResult::Empty)
+    try_direct_extraction(&document)
+        .map(|abstract_text| abstract_text.trim().to_string())
+        .filter(|trimmed| !trimmed.is_empty())
 }
 
 /// HTMLから直接abstractを抽出する
@@ -164,4 +173,45 @@ fn extract_abstract_after_heading(document: &Html) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// NDSS 2005 の旧詳細ページ（要旨なし．og:description はメタデータ）
+    const NDSS_LEGACY_NO_ABSTRACT: &str = r#"<html><head>
+<meta property="og:description" content="Author(s): Alina Oprea , Michael K. Reiter, Ke Yang Download: Paper (PDF) Date: 3 Feb 2005 Document Type: Reports Associated Event: NDSS Symposium 2005" />
+</head><body><div class="entry-content">
+<p><strong>Author(s):</strong> Alina Oprea , Michael K. Reiter, Ke Yang</p>
+<p><strong>Download:</strong> <a href="https://www.ndss-symposium.org/wp-content/uploads/2017/09/Space-Efficient-Block-Storage-Integrity-Alina-Oprea.pdf">Paper (PDF)</a></p>
+</div></body></html>"#;
+
+    #[test]
+    fn test_ndss_legacy_page_without_abstract_does_not_fall_back_to_meta() {
+        let url =
+            "https://www.ndss-symposium.org/ndss2005/space-efficient-block-storage-integrity/";
+        assert_eq!(
+            extract_abstract_from_html(url, NDSS_LEGACY_NO_ABSTRACT),
+            None
+        );
+    }
+
+    #[test]
+    fn test_non_authoritative_site_still_uses_meta_description() {
+        let url = "https://example.org/paper/1";
+        let result = extract_abstract_from_html(url, NDSS_LEGACY_NO_ABSTRACT);
+        assert!(result.unwrap().starts_with("Author(s): Alina Oprea"));
+    }
+
+    #[test]
+    fn test_ndss_page_with_abstract_is_still_extracted() {
+        let html = r#"<html><head><meta property="og:description" content="meta text that is long enough to be picked up by the generic extraction path" /></head>
+<body><section class="new-wrapper"><h2>Abstract:</h2>
+<p>We present a new approach to detecting malicious domains at the upper DNS hierarchy using passive traffic.</p>
+<h2>Downloads</h2></section></body></html>"#;
+        let url = "https://www.ndss-symposium.org/ndss2012/ndss-2012-programme/some-paper/";
+        let result = extract_abstract_from_html(url, html).unwrap();
+        assert!(result.starts_with("We present a new approach"));
+    }
 }

@@ -33,6 +33,11 @@ pub fn try_site_specific_extraction(url: &str, raw_html: &str, document: &Html) 
     result.map(|text| clean_abstract_text(&text))
 }
 
+/// サイト固有パーサの結果を正とし，取れなかったときに汎用抽出へ進ませないサイトか
+pub fn is_site_parser_authoritative(url: &str) -> bool {
+    url.contains("ndss-symposium.org")
+}
+
 /// 抽出したテキストを整形する：プレフィクス除去，空白正規化，トリム
 fn clean_abstract_text(text: &str) -> String {
     let text = text.trim();
