@@ -13,6 +13,19 @@ use ss_tools::structs::PaperField;
 use ss_tools::{QueryParams, SemanticScholar};
 use std::path::Path;
 
+const MIN_ABSTRACT_CHARS: usize = 200;
+
+fn is_sufficient_abstract(text: &str) -> bool {
+    text.trim().chars().count() >= MIN_ABSTRACT_CHARS
+}
+
+fn should_replace_abstract(current: &str, candidate: &str) -> bool {
+    let current_len = current.trim().chars().count();
+    let candidate_len = candidate.trim().chars().count();
+
+    candidate_len > 0 && (current_len == 0 || candidate_len > current_len)
+}
+
 /// 小文字化＋句読点除去で2つのタイトルを比較する
 pub(crate) fn fuzzy_title_match(a: &str, b: &str) -> bool {
     let normalize = |s: &str| -> String {
@@ -261,7 +274,7 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
                     .and_then(|p| p.url)
                     .filter(|url| !url.is_empty());
 
-                if !ss_abstract.is_empty() {
+                if should_replace_abstract(&abstract_text, &ss_abstract) {
                     abstract_text = ss_abstract;
                     source = "s2";
                     tracing::debug!("Tier1(S2) hit for '{}'", paper.title);
@@ -276,13 +289,20 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
         }
 
         // Tier 2: OpenAlex
-        if abstract_text.is_empty() {
+        if !is_sufficient_abstract(&abstract_text) {
             pb.set_message(counts.build_msg(&ActiveTier::OpenAlex));
             match openalex::fetch_abstract_via_openalex(&http_client, &paper.title).await {
                 Ok(text) if !text.is_empty() => {
-                    abstract_text = text;
-                    source = "oa";
-                    tracing::debug!("Tier2(OA) hit for '{}'", paper.title);
+                    if should_replace_abstract(&abstract_text, &text) {
+                        abstract_text = text;
+                        source = "oa";
+                        tracing::debug!("Tier2(OA) hit for '{}'", paper.title);
+                    } else {
+                        tracing::debug!(
+                            "Tier2(OA) abstract shorter than current, kept previous for '{}'",
+                            paper.title
+                        );
+                    }
                 }
                 Ok(_) => {
                     tier_empty_count += 1;
@@ -297,15 +317,24 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
 
         // Tier 3: arXiv（レート制限: 3秒間隔）
         // arXivプレプリントが存在しない会議（IEEE/ACM系等）ではスキップ
-        if abstract_text.is_empty() && crate::conference::has_arxiv_preprints(&paper.conference) {
+        if !is_sufficient_abstract(&abstract_text)
+            && crate::conference::has_arxiv_preprints(&paper.conference)
+        {
             pb.set_message(counts.build_msg(&ActiveTier::ArXiv));
             // arXivのレート制限を守るため3秒待つ
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             match arxiv::fetch_abstract_via_arxiv(&http_client, &paper.title).await {
                 Ok(text) if !text.is_empty() => {
-                    abstract_text = text;
-                    source = "arxiv";
-                    tracing::debug!("Tier3(arXiv) hit for '{}'", paper.title);
+                    if should_replace_abstract(&abstract_text, &text) {
+                        abstract_text = text;
+                        source = "arxiv";
+                        tracing::debug!("Tier3(arXiv) hit for '{}'", paper.title);
+                    } else {
+                        tracing::debug!(
+                            "Tier3(arXiv) abstract shorter than current, kept previous for '{}'",
+                            paper.title
+                        );
+                    }
                 }
                 Ok(_) => {
                     tier_empty_count += 1;
@@ -319,13 +348,20 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
         }
 
         // Tier 4: CrossRef
-        if abstract_text.is_empty() {
+        if !is_sufficient_abstract(&abstract_text) {
             pb.set_message(counts.build_msg(&ActiveTier::CrossRef));
             match crossref::fetch_abstract_via_crossref(&http_client, &paper.title).await {
                 Ok(text) if !text.is_empty() => {
-                    abstract_text = text;
-                    source = "cr";
-                    tracing::debug!("Tier4(CR) hit for '{}'", paper.title);
+                    if should_replace_abstract(&abstract_text, &text) {
+                        abstract_text = text;
+                        source = "cr";
+                        tracing::debug!("Tier4(CR) hit for '{}'", paper.title);
+                    } else {
+                        tracing::debug!(
+                            "Tier4(CR) abstract shorter than current, kept previous for '{}'",
+                            paper.title
+                        );
+                    }
                 }
                 Ok(_) => {
                     tier_empty_count += 1;
@@ -339,15 +375,22 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
         }
 
         // Tier 5: HTMLスクレイピング（直接抽出のみ）
-        if abstract_text.is_empty() {
+        if !is_sufficient_abstract(&abstract_text) {
             pb.set_message(counts.build_msg(&ActiveTier::Html));
             match html_scraper::fetch_abstract_via_html(&http_client, &paper.title, &paper.url)
                 .await
             {
                 Ok(html_scraper::HtmlResult::Direct(text)) => {
-                    abstract_text = text;
-                    source = "html";
-                    tracing::debug!("Tier5(HTML) hit for '{}'", paper.title);
+                    if should_replace_abstract(&abstract_text, &text) {
+                        abstract_text = text;
+                        source = "html";
+                        tracing::debug!("Tier5(HTML) hit for '{}'", paper.title);
+                    } else {
+                        tracing::debug!(
+                            "Tier5(HTML) abstract shorter than current, kept previous for '{}'",
+                            paper.title
+                        );
+                    }
                 }
                 Ok(html_scraper::HtmlResult::Empty { pdf_url }) => {
                     html_pdf_url = pdf_url;
@@ -362,7 +405,7 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
         }
 
         // Tier 6: PDF直接抽出（明示候補 + paper.urlからの推定候補を順に試行）
-        if abstract_text.is_empty() {
+        if !is_sufficient_abstract(&abstract_text) {
             pb.set_message(counts.build_msg(&ActiveTier::Pdf));
             let pdf_candidates = [
                 s2_pdf_url.as_deref().unwrap_or_default(),
@@ -372,10 +415,17 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
             match pdf::fetch_abstract_via_pdf_urls(&http_client, &pdf_candidates, &paper.url).await
             {
                 Ok((text, successful_pdf_url)) if !text.is_empty() => {
-                    abstract_text = text;
-                    fetched_pdf_url = successful_pdf_url;
-                    source = "pdf";
-                    tracing::debug!("Tier6(PDF) hit for '{}'", paper.title);
+                    if should_replace_abstract(&abstract_text, &text) {
+                        abstract_text = text;
+                        fetched_pdf_url = successful_pdf_url;
+                        source = "pdf";
+                        tracing::debug!("Tier6(PDF) hit for '{}'", paper.title);
+                    } else {
+                        tracing::debug!(
+                            "Tier6(PDF) abstract shorter than current, kept previous for '{}'",
+                            paper.title
+                        );
+                    }
                 }
                 Ok(_) => {
                     tier_empty_count += 1;
@@ -440,7 +490,57 @@ pub async fn run_enrich(args: &EnrichArgs, cache_dir: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{fuzzy_title_match, select_pdf_url_for_update};
+    use super::{
+        fuzzy_title_match, is_sufficient_abstract, select_pdf_url_for_update,
+        should_replace_abstract,
+    };
+
+    #[test]
+    fn abstract_with_199_characters_is_insufficient() {
+        assert!(!is_sufficient_abstract(&"a".repeat(199)));
+    }
+
+    #[test]
+    fn abstract_with_200_characters_is_sufficient() {
+        assert!(is_sufficient_abstract(&"a".repeat(200)));
+    }
+
+    #[test]
+    fn abstract_sufficiency_ignores_surrounding_whitespace() {
+        assert!(!is_sufficient_abstract(&format!("  {}\n", "a".repeat(199))));
+        assert!(is_sufficient_abstract(&format!("  {}\n", "a".repeat(200))));
+    }
+
+    #[test]
+    fn abstract_sufficiency_counts_multibyte_characters() {
+        assert!(is_sufficient_abstract(&"é".repeat(200)));
+    }
+
+    #[test]
+    fn empty_current_is_replaced_by_non_empty_candidate() {
+        assert!(should_replace_abstract("", "candidate"));
+    }
+
+    #[test]
+    fn empty_candidate_never_replaces_current() {
+        assert!(!should_replace_abstract("current", "  \n"));
+        assert!(!should_replace_abstract("", ""));
+    }
+
+    #[test]
+    fn longer_candidate_replaces_current() {
+        assert!(should_replace_abstract("short", "a longer candidate"));
+    }
+
+    #[test]
+    fn shorter_candidate_does_not_replace_current() {
+        assert!(!should_replace_abstract("a longer current", "short"));
+    }
+
+    #[test]
+    fn equal_length_candidate_does_not_replace_current() {
+        assert!(!should_replace_abstract("first", "other"));
+    }
 
     #[test]
     fn fuzzy_title_match_ignores_case_punctuation_and_whitespace() {
