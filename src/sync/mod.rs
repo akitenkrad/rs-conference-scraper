@@ -12,7 +12,7 @@ use crate::cache::CacheDb;
 use crate::cli::{SyncArgs, parse_year_range};
 use crate::conference;
 use crate::scraper::build_http_client;
-use crate::types::compute_id;
+use crate::types::{Paper, compute_id};
 
 pub mod progress;
 
@@ -149,6 +149,15 @@ fn recheck_completed_year(year: u16, current_year: u16) -> bool {
     year.saturating_add(1) >= current_year
 }
 
+fn reconcile_paper_year(paper: &mut Paper, sync_year: u16) -> bool {
+    if paper.year == sync_year {
+        return false;
+    }
+
+    paper.year = sync_year;
+    true
+}
+
 async fn run_sync_single(
     scraper: Arc<dyn conference::ConferenceScraper>,
     config: &SyncConfig,
@@ -281,7 +290,14 @@ async fn run_sync_single(
             let mut errors = Vec::new();
             for handle in handles {
                 match handle.await? {
-                    Ok(paper) => {
+                    Ok(mut paper) => {
+                        let scraper_year = paper.year;
+                        if reconcile_paper_year(&mut paper, *year) {
+                            progress.warn(&format!(
+                                "Paper year mismatch for '{}': scraper returned {}, using sync year {}",
+                                paper.title, scraper_year, year
+                            ));
+                        }
                         buffer.push(paper);
                         paper_bar.inc(1);
                     }
@@ -352,6 +368,45 @@ fn incomplete_result(name: &str, incomplete: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_paper(year: u16) -> crate::types::Paper {
+        crate::types::Paper {
+            id: compute_id("Test Paper"),
+            conference: "test-conf".to_string(),
+            year,
+            title: "Test Paper".to_string(),
+            authors: vec!["Test Author".to_string()],
+            r#abstract: "Test abstract".to_string(),
+            url: "https://example.com/paper".to_string(),
+            pdf_url: None,
+            categories: Vec::new(),
+            hash: "test-hash".to_string(),
+        }
+    }
+
+    #[test]
+    fn reconcile_zero_paper_year_with_sync_year() {
+        let mut paper = sample_paper(0);
+
+        assert!(reconcile_paper_year(&mut paper, 2019));
+        assert_eq!(paper.year, 2019);
+    }
+
+    #[test]
+    fn reconcile_matching_paper_year_keeps_year() {
+        let mut paper = sample_paper(2019);
+
+        assert!(!reconcile_paper_year(&mut paper, 2019));
+        assert_eq!(paper.year, 2019);
+    }
+
+    #[test]
+    fn reconcile_different_nonzero_paper_year_with_sync_year() {
+        let mut paper = sample_paper(2018);
+
+        assert!(reconcile_paper_year(&mut paper, 2019));
+        assert_eq!(paper.year, 2019);
+    }
 
     #[test]
     fn recheck_only_current_and_previous_year() {

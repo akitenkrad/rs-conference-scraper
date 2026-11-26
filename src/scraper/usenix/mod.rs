@@ -107,14 +107,14 @@ impl ConferenceScraper for UsenixScraper {
         entry: &PaperListEntry,
     ) -> Result<Paper> {
         let paper_id = compute_id(&entry.title);
-        let year = self
-            .paper_years
-            .read()
-            .await
-            .get(&paper_id)
-            .copied()
-            .or_else(|| extract_year_from_url(&entry.detail_url))
-            .unwrap_or(0);
+        let map_hit = self.paper_years.read().await.get(&paper_id).copied();
+        let year = resolve_year(map_hit, &entry.detail_url).ok_or_else(|| {
+            anyhow::anyhow!(
+                "cannot determine year for '{}' ({})",
+                entry.title,
+                entry.detail_url
+            )
+        })?;
 
         match backend_for_year(year) {
             Backend::Dblp => self.dblp.fetch_paper_detail(client, entry).await,
@@ -143,6 +143,10 @@ fn extract_year_from_url(url: &str) -> Option<u16> {
     None
 }
 
+fn resolve_year(map_hit: Option<u16>, detail_url: &str) -> Option<u16> {
+    map_hit.or_else(|| extract_year_from_url(detail_url))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,6 +166,14 @@ mod tests {
             Some(2014)
         );
         assert_eq!(extract_year_from_url("https://www.usenix.org/about"), None);
+    }
+
+    #[test]
+    fn test_resolve_year_rejects_yearless_url_without_map_hit() {
+        assert_eq!(
+            resolve_year(None, "https://www.usenix.org/presentation/scott-railton"),
+            None
+        );
     }
 
     #[test]
